@@ -1,0 +1,764 @@
+---
+title: "SS2_SE_FASTQ2RRC"
+author: "Cedric"
+date: "10/06/2024"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Synopsis
+The following code describes the pipeline for processing RNAseq data from fastq file to raw read count, as it was used for bulk RNA-seq in Cumming et al, 2025. It is designed to process RNA-seq data made with the Smart-Seq2 (SS2) protocol and sequenced with single-end sequencing. 
+
+The following are required to run the pipeline:
+A single main script `fastq2RRC.sh` to run fastq to raw read count for SS2 single end data. 
+A single fastq file per sample as input.
+A directory called fastq2RRC_scripts with accessory python scripts must be given including:
+- get_fastq_not_from_id_list.py
+- symplicity.py
+- get_cdna_pos.py
+
+The accessory data files (or path thereto) are provided in a parameter csv file with two columns called "Parameter" and "Value", indicating:
+- mappable_genome: a STAR mappable genome
+- rRNA_fasta: a fasta file with rRNA sequence to remove
+- annotation_gtf: a gtf file used for the read count with HT-Seq
+- annotation_bed: an annotation bed file used for 3' bias quality control
+- intronic_bed: an annotation bed file including bot introns and exons as features
+- cDNA_position_key: a precalculated table with Chromosome, genomic position, strand, Gene, Exon and cDNA position for each exonic basepair of all genes
+- genic_cap: maximum number of genic reads estimayte for subsampling of large fastqfiles. e.g 4,000,000 
+- tp_bias_max_length: max length of alignment kept to calculate 3' bias. e.g 100
+- tp_bias_sample_size: size of random sample for 3' bias analysis
+- symplicity_q_cutoff: ajusted p value cutoff for significance of duplicte detection. e.g 0.0001
+- symplicity_FC_cutoff: Fold-change cutoff value for duplicate removal. Represents the fold chnage of coverage between putative duplicte and adjacent positions. e.g 1.5
+
+The pipeline will return the following:
+- a table with counts returned by HT-Seq count (s1_ht_count.txt)
+- a table with read position along 5'-3' extant of cDNAs (s1_cDNA_pos_df)
+- a table with mapping statistics (s1_fastq_bam_genic_count.txt)
+
+In addition, an Arch directory is returned with following files:
+- bam file (s1.bam)
+- read-count for introns (s1_intronic_count.txt)
+- The splice junction report from STAR aligment (s1_SJ.out.tab)
+- bam file with unmapped reads (s1.bam)
+
+The code below is adapted to run the pipeline on the server Rackham on Uppmax made available by the National Academic Infrastructure for Supercomputing in Sweden (NAISS). It must therefore be adapted to the user's environement to reproduce the same output. 
+
+The main bash script fastq2RRC.sh runs the whole pipeline. The following steps are taken:
+1. 10000 reads are sampled randomly and mapped to the genome. The proportion of reads mapping to exons is evaluated using HTseq for read count. The number of reads to subsample is calculated based on that and the fastq file is subsampled if exceeeding desired size. 
+2. Adapters from the smartseq2 library prep protocol are removed with cutadapt
+3. Reads mapping to rRNA sequence with Bowtie2  are identified and removed
+4. Reads are mapped to reference genome using STAR
+5. Exact mapping duplicates are removed in a coverage-dependent manner with Symplicity (see below)
+6. Spliced reads are counted
+7. 3' bias is calculated from sam file and annotation file
+8. reads mapping to exons are counted per gene with HTSeq count
+9. Intronic reads are counted with BEDtools
+10. Mapping statistics are calculated
+
+
+# fastq2RRC
+fastq2RRC.sh
+```{bash}
+#!/bin/bash -l
+
+# Use as: sbatch fastq2RRC.sh <infile.fastq.gz> <rootname> <parameters.csv> <scripts_directory> <threads>
+# The output files will be called rootname.bam, e.g s1.bam
+
+#SBATCH -A NAISS2023-22-1275
+#SBATCH -p core -n 5
+#SBATCH -t 48:00:00
+#SBATCH -J fastq2RRC
+
+# parametrers file is parsed
+map_gen_dir=$(cat $3 | awk -F "," '$1 ~ /mappable_genome/ {print $2}')
+rRNA_fasta_file=$(cat $3 | awk -F "," '$1 ~ /rRNA_fasta/ {print $2}')
+annotation_gtf_file=$(cat $3 | awk -F "," '$1 ~ /annotation_gtf/ {print $2}')
+annotation_bed_file=$(cat $3 | awk -F "," '$1 ~ /annotation_bed/ {print $2}')
+intronic_bed_file=$(cat $3 | awk -F "," '$1 ~ /intronic_bed/ {print $2}')
+cDNA_position_key_file=$(cat $3 | awk -F "," '$1 ~ /cDNA_position_key/ {print $2}')
+genic_cap=$(cat $3 | awk -F "," '$1 ~ /genic_cap/ {print $2}')
+sym_q_cutoff=$(cat $3 | awk -F "," '$1 ~ /symplicity_q_cutoff/ {print $2}')
+sym_FC_cutoff=$(cat $3 | awk -F "," '$1 ~ /symplicity_FC_cutoff/ {print $2}')
+tp_bias_max_length=$(cat $3 | awk -F "," '$1 ~ /tp_bias_max_length/ {print $2}')
+tp_bias_sample_size=$(cat $3 | awk -F "," '$1 ~ /tp_bias_sample_size/ {print $2}')
+
+# copies the necessary files to scratch
+cp ${1} $SNIC_TMP/infq.fastq.gz
+cp -r $4 $SNIC_TMP/scripts_dir
+cp -r $map_gen_dir $SNIC_TMP/gendir
+cp $rRNA_fasta_file $SNIC_TMP/rRNA.fas
+cp $annotation_gtf_file $SNIC_TMP/annot.gtf
+cp $annotation_bed_file $SNIC_TMP/annot.bed
+cp $intronic_bed_file $SNIC_TMP/intronic.bed
+cp $cDNA_position_key_file $SNIC_TMP/cDNA_pos_key
+
+# takes note of the working directory
+pwd=$(pwd)
+
+# moves to scratch
+cd $SNIC_TMP
+
+# samples 10k reads
+module load bioinfo-tools
+module load seqtk
+seqtk sample -s42 infq.fastq.gz 10000 > sub10k.fq
+
+# maps the 10k reads
+module load star
+module load samtools
+
+STAR --runThreadN $5 --outFileNamePrefix sub10k_ --readFilesIn sub10k.fq --genomeDir gendir --outSAMunmapped Within --outFilterScoreMinOverLread 0.66 --outFilterMatchNminOverLread 0.66
+
+samtools view -b -F4 -F256 sub10k_Aligned.out.sam | samtools sort -O bam > sub10k.bam
+
+# counts reads mapped to genes for sub10k
+module load htseq
+htseq-count -f bam -r pos -i gene_id --additional-attr=gene_name -t exon  -m union --stranded=no sub10k.bam  annot.gtf > sub10k_ht_count
+
+# calculates expected genic and capped subsample size
+nraw_fastq=$(zcat infq.fastq.gz | awk 'NR%4==1' | wc -l )
+ngenic_10k=$(cat sub10k_ht_count | grep -v '__' | awk '{sum+=$3;} END{print sum;}')
+capped_subsam_size=$(( genic_cap * 10000 /  ngenic_10k ))
+
+# subsamples with seqtk
+if [[ ${nraw_fastq} -gt ${genic_cap} ]]
+then
+  seqtk sample -s42 infq.fastq.gz ${capped_subsam_size} > capsized.fastq
+else
+  zcat infq.fastq.gz > capsized.fastq
+fi
+
+echo "capping completed"
+
+# adapters are removed with cutadapt
+module load cutadapt
+
+# runs cutadapt
+cutadapt -g AAGCAGTGGTATCAACGCAGAGTACGGG  -a CCCGTACTCTGCGTTGATACCACTGCTT -g AAGCAGTGGTATCAACGCAGAGTACTTT  -a AAAGTACTCTGCGTTGATACCACTGCTT -g AGATGTGTATAAGAGACAG -a CTGTCTCTTATACACATCT -n 5 -e 0.2 -O 2 -m 20 -j $5 -o noAd.fastq.gz capsized.fastq
+
+echo "adapter removal completed"
+
+# runs bowtie2 and removes rRNA
+module load bowtie2
+module load biopython
+
+bowtie2-build rRNA.fas rRNA
+
+bowtie2 -p $5 -x rRNA -U noAd.fastq.gz -S rRNA_map.sam
+
+samtools view -F256 -F4 rRNA_map.sam | cut -f1 | uniq | sort | uniq > rRNA_unwanted_ids
+
+python scripts_dir/get_fastq_not_from_id_list.py noAd.fastq.gz rRNA_unwanted_ids norRNA.fastq
+
+echo "rRNA removal completed"
+
+# Runs STAR
+STAR --runThreadN $5 --outFileNamePrefix ${2}_ --readFilesIn norRNA.fastq --genomeDir gendir --outSAMunmapped Within --outFilterScoreMinOverLread 0.66 --outFilterMatchNminOverLread 0.66
+
+samtools view -b -F4 -F256 ${2}_Aligned.out.sam | samtools sort -O sam > ${2}.sam
+samtools view -b -f4 -F256 ${2}_Aligned.out.sam > ${2}_unmapped.bam
+
+echo "mapping completed"
+
+# duplicate removal
+python scripts_dir/symplicity.py $2.sam ${sym_q_cutoff} ${sym_FC_cutoff}
+
+echo "duplicate removal completed"
+
+# spliced reads
+samtools view -h ${2}_noDupl.sam | awk '$6 ~ /N/ || $1 ~ /^@/' > ${2}_spliced.sam
+
+echo "spliced reads selection completed"
+
+# 3' bias
+python scripts_dir/get_cdna_pos.py ${2}_noDupl.sam cDNA_pos_key annot.bed ${tp_bias_max_length} ${tp_bias_sample_size}
+cat sam_cDNA_pos_df | awk -v tagvar=${2} 'NR!=1{print tagvar"\t"$0} NR==1{print "Sample\t"$0}' > ${2}_cDNA_pos_df
+
+echo "Three prime bias analysis completed"
+
+# ht-seq count
+htseq-count -f sam -r pos -i gene_id --additional-attr=gene_name -t exon  -m union --stranded=no ${2}_noDupl.sam  annot.gtf > ${2}_ht_count
+htseq-count -f sam -r pos -i gene_id --additional-attr=gene_name -t exon  -m union --stranded=no ${2}_spliced.sam  annot.gtf > ${2}_spliced_ht_count
+
+echo "read count completed"
+
+
+# conting of intronic reads
+module load BEDTools/2.31.1
+samtools view -h -Sb ${2}_noDupl.sam > ${2}_noDupl.bam
+echo Feature$'\t'Feature_size$'\t'Read_Count > ${2}_intronic_count.txt
+bedtools coverage -a intronic.bed -b ${2}_noDupl.bam | awk '{print $4"\t"$9"\t"$7}' >> ${2}_intronic_count.txt
+
+echo "intronic count completed"
+
+
+# Counting of read types
+echo Sample$'\t'Raw_fastq$'\t'Capped_fastq$'\t'noAd$'\t'noAd_norRNA$'\t'mapped$'\t'mapped_noDupl$'\t'Genic$'\t'Spliced$'\t'nGenes$'\t'mitoch > ${2}_fastq_bam_genic_count.txt
+
+ncapped_fastq=$(cat capsized.fastq | awk 'NR%4==1' |  wc -l)
+nnoad_fastq=$(zcat noAd.fastq.gz | awk 'NR%4==1' |  wc -l)
+nnorna_fastq=$(cat norRNA.fastq | awk 'NR%4==1' | wc -l)
+nmapped=$(samtools view ${2}.sam | cut -f1 | uniq | sort | uniq | wc -l)
+nmapped_noDupl=$(samtools view ${2}_noDupl.sam | cut -f1 | uniq | sort | uniq | wc -l)
+ngenic=$(cat ${2}_ht_count | grep -v '__' | awk '{sum+=$3;}END{print sum;}')
+nspliced=$(cat ${2}_spliced_ht_count | grep -v '__' | awk '{sum+=$3;}END{print sum;}')
+ngenes=$(cat ${2}_ht_count | grep -v '__' | awk '$3>0{print $2}' | sort | uniq | wc -l)
+nmitoch=$(cat ${2}_ht_count | grep -v '__' | awk '$2~/mt-/' | awk '{sum+=$3;}END{print sum;}')
+
+echo -e ${2}'\t'$nraw_fastq'\t'$ncapped_fastq'\t'$nnoad_fastq'\t'$nnorna_fastq'\t'$nmapped'\t'$nmapped_noDupl'\t'$ngenic'\t'$nspliced'\t'$ngenes'\t'$nmitoch >> ${2}_fastq_bam_genic_count.txt
+
+echo "read statistics completed"
+
+# Addition of sample tag to RRC file
+cat ${2}_ht_count | awk -v varsam=${2} '{print varsam"\t"$0}' | grep -v '__' > ${2}_ht_count.txt
+
+# Saving of Arch directory
+mkdir ${2}_Arch
+mv norRNA.fastq ${2}_Arch/${2}_Qcleaned_R1.fastq.gz
+samtools view -h -Sb ${2}.sam > ${2}.bam
+mv ${2}.bam ${2}_Arch
+mv ${2}_intronic_count.txt ${2}_Arch
+mv ${2}_Log.final.out ${2}_Arch
+mv ${2}_SJ.out.tab ${2}_Arch
+mv ${2}_unmapped.bam ${2}_Arch
+
+# copies output files back to working directory
+cp ${2}_fastq_bam_genic_count.txt $pwd
+cp ${2}_ht_count.txt $pwd
+cp ${2}_cDNA_pos_df $pwd
+cp -r ${2}_Arch $pwd
+```
+
+
+
+
+# Accessory scripts
+The python script `symplicity.py` takes a single sam file and returns a sam file after removing potential PCR duplicates. 
+Duplicate reads with exact same mapping position and sequence are identified and removed in a coverage-dependent manner to "smoothen" the per-base coverage. 
+symplicity.py
+```{python}
+# use as python symplicity.py <in.sam> <pval_cutoff> <FC_cutoff>
+
+import sys
+import re
+import pandas as pd
+from scipy.stats import poisson
+import random
+
+infile_name = sys.argv[1]
+pvalCutoff = float(sys.argv[2])
+FCCutoff = float(sys.argv[3])
+
+rootname=infile_name[:-4]
+outfile_name=rootname+"_noDupl.sam"
+
+# functions
+# get_end
+def get_end(startofalig, cigar):
+    cignum=re.split('[A-Z]', cigar)[0:-1]
+    ciglet=[i for i in cigar if not i.isdigit()]
+    readspan=sum([int(j) for (j,i) in zip(cignum, ciglet) if i in {"M", "N", "D"}])
+    endofalig=int(startofalig)+readspan-1
+    return endofalig
+
+# get_readexons_pos
+def get_readexons_pos(startofalig, cigar):
+    pos=int(startofalig)
+    cignum=re.split('[A-Z]', cigar)[0:-1]
+    ciglet=[i for i in cigar if not i.isdigit()]
+    readexons=list()
+    exon_length=0
+    for (j,i) in zip(cignum, ciglet):
+        if i in {"M"}:
+            exon_length=exon_length+int(j)
+        elif i in {"N", "D"}:
+            readexons.append([pos, "start"])
+            readexons.append([pos+exon_length-1, "end"])
+            pos=pos+exon_length+int(j)
+            exon_length=0
+    readexons.append([pos, "start"])
+    readexons.append([pos+exon_length-1, "end"])
+    return readexons
+
+# get_splice_sites
+def get_splice_sites(startofalig, cigar):
+    donors=list()
+    acceptors=list()
+    pos=int(startofalig)
+    cignum=re.split('[A-Z]', cigar)[0:-1]
+    ciglet=[i for i in cigar if not i.isdigit()]
+    readexons=list()
+    exon_length=0
+    for (j,i) in zip(cignum, ciglet):
+        if i in {"M", "D"}:
+            exon_length=exon_length+int(j)
+        elif i == "N":
+            acceptors.append(pos)
+            donors.append(pos+exon_length-1)
+            pos=pos+exon_length+int(j)
+            exon_length=0
+    acceptors.append(pos)
+    donors.append(pos+exon_length-1)
+    donors=set(donors[:-1])
+    acceptors=set(acceptors[1:])
+    return [donors, acceptors]
+
+# get_adjcov
+def get_adjcov(in_lol, in_extremity):
+    # makes a dataframe with upstream and downstream adjacent coverage
+    readexon_coords=list()
+    for read in in_lol:
+        for pos in get_readexons_pos(read[3], read[4]):
+            readexon_coords.append(pos)
+    posdf = pd.DataFrame(readexon_coords, columns=['Position', 'Type'])
+
+    start_counts=posdf.loc()[posdf["Type"]=="start"].groupby("Position").size().reset_index(name="scount")
+    end_counts=posdf.loc()[posdf["Type"]=="end"].groupby("Position").size().reset_index(name="ecount")
+    term_counts=pd.DataFrame({"Position": end_counts["Position"]+1, "tcount": end_counts["ecount"]})
+    adjuptostarts=pd.DataFrame({"Position": start_counts["Position"]-1})
+    counts_df=start_counts.merge(end_counts, how="outer").merge(term_counts, how="outer").merge(adjuptostarts, how="outer").fillna(0).sort_values(by=["Position"]).reset_index(drop=True)
+    counts_df["cov"]=(counts_df["scount"].cumsum())-(counts_df["tcount"].cumsum())
+    counts_df["prevcov"]=counts_df["cov"].shift()
+    counts_df["nextcov"]=counts_df["cov"].shift(-1)
+
+    # get adj cov of start doublets and end doublets
+    sdoublet_df=counts_df[counts_df["scount"]>1]
+    scov_df=pd.DataFrame({"Start": sdoublet_df["Position"],  "StartCov": sdoublet_df["cov"], "PrevCov": sdoublet_df["prevcov"]})
+    edoublet_df=counts_df[counts_df["ecount"]>1]
+    ecov_df=pd.DataFrame({"End": edoublet_df["Position"], "EndCov": edoublet_df["cov"], "NextCov": edoublet_df["nextcov"]})
+
+    if in_extremity=="start":
+        return scov_df
+    elif in_extremity=="end":
+        return ecov_df
+
+# get_Cov
+def get_Cov(Start, End, PrevCov, NextCov, spl_acc, spl_don):
+    if Start in spl_acc and End in spl_don:
+        Cov=pd.NA
+    elif Start in spl_acc:
+        Cov=NextCov
+    elif End in spl_don:
+        Cov=PrevCov
+    else:
+        Cov=max([PrevCov, NextCov])
+    return Cov
+
+# get_Epl
+def get_Epl(cov, readseq):
+    ASD=cov/MAL
+    f=dict(AL_frq)[len(readseq)]
+    EPL=ASD*f
+    return EPL
+
+# get_pcount
+def get_pcount(obscount, explicity):
+    if pd.isna(explicity):
+        pcount=1
+    else:
+        pcount = 1-poisson.cdf(k=(obscount-1), mu=explicity)
+    return pcount
+
+# get_DeltaPlic
+def get_DeltaPlic(Obs_plic, Exp_plic):
+    if pd.isna(Exp_plic):
+        DeltaPlic=0
+    else:
+        DeltaPlic=Obs_plic - round(Exp_plic)
+    return DeltaPlic
+
+# get_minDeltaCov
+def get_minDeltaCov(start, end, prevcov, startcov, endcov, nextcov, spl_acc, spl_don):
+    startNotch=startcov-prevcov
+    endNotch=endcov-nextcov
+    if start in spl_acc and end in spl_don:
+        minDeltaCov=pd.NA
+    elif start in spl_acc:
+        minDeltaCov=endNotch
+    elif end in spl_don:
+        minDeltaCov=startNotch
+    else:
+        minDeltaCov=min(startNotch, endNotch)
+    return minDeltaCov
+
+# get_minCovFC
+def get_minCovFC(start, end, prevcov, startcov, endcov, nextcov, spl_acc, spl_don):
+    def safe_div(x, y, alternate):
+        if y == 0:
+            return alternate
+        return x / y
+
+    startFC=safe_div(startcov, prevcov, float('inf'))
+    endFC=safe_div(endcov, nextcov, float('inf'))
+    if start in spl_acc and end in spl_don:
+        minCovFC=pd.NA
+    elif start in spl_acc:
+        minCovFC=endFC
+    elif end in spl_don:
+        minCovFC=startFC
+    else:
+        minCovFC=min(startFC, endFC)
+    return minCovFC
+
+# get_n_to_remove
+def get_n_to_remove(oplicity, mindeltacov, deltaplic):
+    # define n
+    n=0
+    if pd.isna(mindeltacov):
+        mindeltacov=0
+    if pd.isna(deltaplic):
+        deltaplic=0
+    if min(deltaplic, mindeltacov)>0:
+        if oplicity==2:
+            n=1
+        elif oplicity>2 and mindeltacov>deltaplic:
+            n=int(deltaplic)
+        elif oplicity>2 and mindeltacov<deltaplic:
+            n=int(mindeltacov)
+    return n
+
+# get_samlol
+def get_samlol(in_losam, in_strand):
+    pos_lol=list()
+    neg_lol=list()
+    for line in in_losam:
+        readID=line.split("\t")[0]
+        samflag=line.split("\t")[1]
+        chrom=line.split("\t")[2]
+        startpos=line.split("\t")[3]
+        cigar=line.split("\t")[5]
+        SEQ=line.split("\t")[9]
+        saminfo=[readID, samflag, chrom, startpos, cigar, SEQ]
+        binsa=str(bin(4096+int(samflag)))
+        if binsa[-5]=="0":
+            pos_lol.append(saminfo)
+        elif binsa[-5]=="1":
+            neg_lol.append(saminfo)
+    if in_strand=="pos":
+        return pos_lol
+    elif in_strand=="neg":
+        return neg_lol
+
+# get_q
+def get_q(in_vect):
+    sorted_ps=sorted(in_vect)
+    l=len(in_vect)
+    prev_bh_value = 0
+    bh_list=list()
+    for i in range(l):
+        bh_value = sorted_ps[i] * l / (i + 1)
+        bh_value = min(bh_value, 1)
+        bh_value = max(bh_value, prev_bh_value)
+        bh_list.append(bh_value)
+        prev_bh_value = bh_value
+
+    ps_df=pd.DataFrame({"ps": in_vect})
+    ps_df=ps_df.sort_values("ps")
+    ps_df["qs"]=bh_list
+    ps_df=ps_df.sort_index()
+    qs_orig_order=ps_df["qs"].values.tolist()
+
+    return qs_orig_order
+
+# ban_n_reads
+def ban_n_reads(Reads, n):
+    banned_reads=random.sample(Reads, n)
+    return banned_reads
+
+# get_multiplet_info
+def get_multiplet_info(in_lol):
+    #The splice donors and acceptors are extracted
+    spl_donors=set()
+    spl_acceptors=set()
+    for alig in in_lol:
+        startpos=int(alig[3])
+        cigar=alig[4]
+        donacc=get_splice_sites(startpos, cigar)
+        spl_donors=spl_donors.union(donacc[0])
+        spl_acceptors=spl_acceptors.union(donacc[1])
+
+    # multiplet df is created and multiplicates are identified
+    possam_df = pd.DataFrame(in_lol, columns=['readID', 'samflag', 'Chrom', 'Start', 'cigar', 'readSeq'])
+    multiplet_df  =possam_df.groupby(["readSeq", "Start", "cigar"]).agg(ReadIDs=("readID",lambda x: list(x)), plicity=('readID', 'size')).reset_index()
+    multiplet_df = multiplet_df[multiplet_df["plicity"]>1]
+    multiplet_df = multiplet_df.astype({"Start": int})
+
+    # the function is interrupted and returns empty df if no multiplicates are found
+    empty_df=pd.DataFrame(columns=["ReadIDs", "pcount", "minCovFC", "n_to_remove"])
+
+    if len(multiplet_df.index)==0:
+        return empty_df
+
+    # end of alignment is added
+    multiplet_df["End"] = multiplet_df.apply(lambda x: get_end(x["Start"], x["cigar"]), axis=1)
+
+    # Start, End and Adjacent coverage are added
+    startcov_df=get_adjcov(in_lol=in_lol, in_extremity="start")
+    endcov_df=get_adjcov(in_lol=in_lol, in_extremity="end")
+    multiplet_df=multiplet_df.merge(startcov_df, how="left", on="Start")
+    multiplet_df=multiplet_df.merge(endcov_df, how="left", on="End")
+
+    # coverage and plicity parameters are calculated
+    multiplet_df["Cov"]=multiplet_df.apply(lambda x: get_Cov(Start=x["Start"], End=x["End"], PrevCov=x["PrevCov"], NextCov=x["NextCov"], spl_don=spl_donors, spl_acc=spl_acceptors), axis=1)
+    multiplet_df["EPL"]=multiplet_df.apply(lambda x: get_Epl(cov=x["Cov"], readseq=x["readSeq"]), axis=1)
+    multiplet_df["pcount"]=multiplet_df.apply(lambda x: get_pcount(obscount=x["plicity"], explicity=x["EPL"]), axis=1)
+
+    # coverage and plicity parameters are calculated
+    multiplet_df["DeltaPlic"]=multiplet_df.apply(lambda x: get_DeltaPlic(Obs_plic=x["plicity"], Exp_plic=x["EPL"]), axis=1)
+    multiplet_df["minDeltaCov"]=multiplet_df.apply(lambda x: get_minDeltaCov(start=x["plicity"], end=x["End"], prevcov=x["PrevCov"], startcov=x["StartCov"], endcov=x["EndCov"], nextcov=x["NextCov"], spl_don=spl_donors, spl_acc=spl_acceptors), axis=1)
+    multiplet_df["minCovFC"]=multiplet_df.apply(lambda x: get_minCovFC(start=x["Start"], end=x["End"], prevcov=x["PrevCov"], startcov=x["StartCov"], endcov=x["EndCov"], nextcov=x["NextCov"], spl_don=spl_donors, spl_acc=spl_acceptors), axis=1)
+
+    # reads to remove are counted and essential info is returned
+    multiplet_df["n_to_remove"]=multiplet_df.apply(lambda x: get_n_to_remove(oplicity=x["plicity"], mindeltacov=x["minDeltaCov"], deltaplic=x["DeltaPlic"]), axis=1)
+    multiplet_df=multiplet_df[multiplet_df["n_to_remove"]>0]
+
+    multiplet_df=multiplet_df[["ReadIDs", "pcount", "minCovFC", "n_to_remove"]]
+    multiplet_df=multiplet_df.astype({"minCovFC": float})
+    multiplet_df=multiplet_df.astype({"n_to_remove": int})
+
+    return multiplet_df
+
+
+# get_unwanted
+def get_unwanted(in_df, in_FC_cutoff, in_q_cutoff):
+    in_df["qval"]=get_q(in_df["pcount"].values.tolist())
+    sig_df=in_df[in_df["minCovFC"]>in_FC_cutoff]
+    sig_df=sig_df[sig_df["qval"]<in_q_cutoff]
+    sig_df["banned_reads"]=sig_df.apply(lambda x: ban_n_reads(Reads=x["ReadIDs"], n=x["n_to_remove"]), axis=1)
+    banned_lol=sig_df["banned_reads"].values.tolist()
+    banned_set=set([x for y in banned_lol for x in y])
+    return banned_set
+
+
+
+# files pre-processing
+with  open(infile_name, 'r') as infile:
+    alsizes=list()
+    for line in infile:
+          if line[0]!="@":
+              alsize=len(line.split("\t")[9])
+              alsizes.append(alsize)
+AL_frq=[(l, alsizes.count(l) / len(alsizes)) for l in set(alsizes)]
+MAL=sum(alsizes)/len(alsizes)
+
+infile.close()
+
+# sam processing
+infile = open(infile_name, 'r')
+outfile = open(outfile_name, 'w')
+logfile = open('log_anal.txt', 'w')
+ends=set()
+losam=[]
+plicity_issue=False
+prevstart=int()
+prevchrom=str("")
+prev_endmax=int(0)
+pos_mp_info_df=pd.DataFrame(columns=["ReadIDs", "pcount", "minCovFC", "n_to_remove"])
+neg_mp_info_df=pd.DataFrame(columns=["ReadIDs", "pcount", "minCovFC", "n_to_remove"])
+for line in infile:
+    if line[0]!="@":
+        start=int(line.split("\t")[3])
+        if start==prevstart:
+            plicity_issue=True
+        cigar=line.split("\t")[5]
+        end=get_end(start, cigar)
+        ends.add(end)
+        endmax=max(ends)
+        chrom=line.split("\t")[2]
+
+        if (start<prev_endmax and chrom==prevchrom) or prevchrom=="":
+            losam.append(line)
+
+        else:
+            if plicity_issue:
+                # Gets multiplicate info df
+                pos_mp_info_chunk_df=get_multiplet_info(in_lol=get_samlol(losam, "pos"))
+                neg_mp_info_chunk_df=get_multiplet_info(in_lol=get_samlol(losam, "neg"))
+
+                # Appends chunk info_df to main info_df
+                pos_mp_info_df=pd.concat([pos_mp_info_df, pos_mp_info_chunk_df], axis=0, ignore_index=True).reset_index(drop=True)
+                neg_mp_info_df=pd.concat([neg_mp_info_df, neg_mp_info_chunk_df], axis=0, ignore_index=True).reset_index(drop=True)
+
+            # Resets plicity_issue
+            plicity_issue=False
+
+            # Empties ends and adds back end of first read of upcoming block
+            ends=set([end])
+            endmax=max(ends)
+
+            # Empties losam and adds first read of upcoming block
+            losam=[line]
+
+        prevstart=start
+        prevchrom=chrom
+        prev_endmax=endmax
+
+
+# after last read
+if plicity_issue:
+  # Gets multiplicate info df
+  pos_mp_info_chunk_df=get_multiplet_info(in_lol=get_samlol(losam, "pos"))
+  neg_mp_info_chunk_df=get_multiplet_info(in_lol=get_samlol(losam, "neg"))
+
+  # Appends chunk info_df to main info_df
+  pos_mp_info_df=pd.concat([pos_mp_info_df, pos_mp_info_chunk_df], axis=0, ignore_index=True).reset_index(drop=True)
+  neg_mp_info_df=pd.concat([neg_mp_info_df, neg_mp_info_chunk_df], axis=0, ignore_index=True).reset_index(drop=True)
+
+# makes false discovery rate correction and extracts reads to remove
+pos_unwanted=get_unwanted(pos_mp_info_df, in_FC_cutoff=FCCutoff, in_q_cutoff=pvalCutoff)
+neg_unwanted=get_unwanted(neg_mp_info_df, in_FC_cutoff=FCCutoff, in_q_cutoff=pvalCutoff)
+unwanted=pos_unwanted.union(neg_unwanted)
+infile.close()
+
+infile = open(infile_name, 'r')
+for line in infile:
+    if line[0]=="@":
+        outfile.write(line)
+
+    else:
+        readid=line.split("\t")[0]
+        if readid not in unwanted:
+            outfile.write(line)
+
+outfile.close()
+logfile.close()
+```
+
+The python script `get_cdna_pos.py` takes a single sam file and an annotation bed file. For each of a number of randomly sampled reads, it returns a table with Gene, relative position along 5'-3' extent of cDNA and absolute distance from 3' end. The number of reads randomly sampled is given as an argument.
+get_cdna_pos.py
+```{python}
+# use as python get_cdna_pos.py <in.sam> <in_cDNA_pos_table> <in.bed>  <max_read_length> <n_reads>
+
+import sys
+import re
+import pandas as pd
+import random
+
+infile = sys.argv[1]
+cDNA_pos_file = sys.argv[2]
+bedfile=sys.argv[3]
+max_read_length=int(sys.argv[4])
+n_reads=int(sys.argv[5])
+
+# a function to calculate the end of a read from start and cigar
+def get_end(startofalig, cigar):
+    cignum=re.split('[A-Z]', cigar)[0:-1]
+    ciglet=[i for i in cigar if not i.isdigit()]
+    readspan=sum([int(j) for (j,i) in zip(cignum, ciglet) if i in {"M", "N", "D"}])
+    endofalig=int(startofalig)+readspan-1
+    return endofalig
+
+# takes the sam entries and extracts coordinates
+samlol=list()
+for line in open(infile):
+    if line[0]!="@":
+        readID=line.split("\t")[0]
+        chrom=line.split("\t")[2]
+        startpos=int(line.split("\t")[3])
+        cigar=line.split("\t")[5]
+        endpos=get_end(startpos, cigar)
+        saminfo=[readID, chrom, startpos, endpos]
+        samlol.append(saminfo)
+
+sam_df=pd.DataFrame(samlol, columns=["readID", "Chrom", "Start", "End"])
+
+# samples n reads
+sam_df=sam_df.sample(n=n_reads)
+
+# makes a set of pairs with sam start and end coordinates
+sam_coord_pairs=set()
+for read in samlol:
+    sam_coord_pairs.add((read[1], read[2]))
+    sam_coord_pairs.add((read[1], read[3]))
+
+# extracts coordinates from cDNA_pos table
+cdna_coord_lol=list()
+for line in open(cDNA_pos_file):
+    if line.split("\t")[0]!="Chrom":
+        chrom=line.split("\t")[0]
+        genomepos=int(line.split("\t")[1])
+        if (chrom, genomepos) in sam_coord_pairs:
+            gene=line.split("\t")[3]
+            cdnapos=int(line.split("\t")[5])
+            cdna_coord_lol.append([chrom, genomepos, gene, cdnapos])
+
+cdna_coord_df=pd.DataFrame(cdna_coord_lol, columns=["Chrom", "genomepos", "Gene", "cdnapos"])
+
+
+# extracts cDNA length from bedfile
+bedlol=list()
+for line in open(bedfile):
+    start=int(line.split("\t")[1])
+    end=int(line.split("\t")[2])
+    exonlen=end-start+1
+    gene=line.split("\t")[3].split("_")[1]
+    bedlol.append([gene, exonlen])
+
+bed_df=pd.DataFrame(bedlol, columns=["Gene", "size"])
+genesize_df=bed_df.groupby('Gene')["size"].sum().reset_index()
+
+# merges read coordinatesa and cDNA_pos info
+sam_df=sam_df.merge(cdna_coord_df, left_on=['Chrom', 'Start'], right_on=['Chrom', 'genomepos'], how='left').dropna().drop('genomepos', axis=1)
+sam_df.columns=sam_df.columns.str.replace('Gene', 'start_gene').str.replace('cdnapos', 'cdna_start')
+sam_df=sam_df.merge(cdna_coord_df, left_on=['Chrom', 'End'], right_on=['Chrom', 'genomepos'], how='left').dropna().drop('genomepos', axis=1)
+sam_df.columns=sam_df.columns.str.replace('Gene', 'end_gene').str.replace('cdnapos', 'cdna_end')
+sam_df=sam_df[["start_gene", "end_gene", "cdna_start", "cdna_end"]]
+sam_df=sam_df[sam_df["start_gene"]==sam_df["end_gene"]]
+sam_df=sam_df[["start_gene", "cdna_start", "cdna_end"]]
+sam_df.columns=sam_df.columns.str.replace('start_gene', 'Gene')
+
+# reads with long distance between start and end are discarded
+sam_df=sam_df.loc[(sam_df["cdna_end"]-sam_df["cdna_start"])<max_read_length]
+
+# calculates mean position
+def get_mean(x, y):
+    z=(x+y)/2
+    z=round(z)
+    return z
+sam_df['mean_pos']=sam_df.apply(lambda x: get_mean(x["cdna_start"], x["cdna_end"]), axis=1)
+
+# calculates relative position and distance to end
+sam_df=sam_df.merge(genesize_df, on='Gene', how='left').dropna()
+def get_d_to_end(meanpos, totsize):
+    dte=totsize-meanpos
+    return dte
+
+sam_df['d_to_end']=sam_df.apply(lambda x: get_d_to_end(x["mean_pos"], x["size"]), axis=1)
+sam_df['relpos']=round(sam_df['mean_pos']/sam_df['size'], 3)
+sam_df=sam_df[["Gene", "relpos", "d_to_end"]]
+
+sam_df.to_csv("sam_cDNA_pos_df", sep='\t', index=False, header=True)
+```
+
+The python script `get_fastq_not_from_id_list.py` can be used to remove selected reads from a fastq file. 
+get_fastq_not_from_id_list.py
+```{python}
+import sys
+from Bio import SeqIO
+import gzip
+
+fastq_file = sys.argv[1]  # Input fastq file
+ids_file = sys.argv[2] # Input file, one per line
+result_file = sys.argv[3] # Output fastq file
+
+unwanted = set()
+with open(ids_file) as f:
+    for line in f:
+        line = line.strip()
+        if line != "":
+            unwanted.add(line)
+
+fastq_sequences = SeqIO.parse(gzip.open(fastq_file, 'rt'),'fastq')
+end = False
+with open(result_file, "w") as f:
+    for seq in fastq_sequences:
+        if seq.id not in unwanted:
+            SeqIO.write([seq], f, "fastq")
+
+```
+
+
+
