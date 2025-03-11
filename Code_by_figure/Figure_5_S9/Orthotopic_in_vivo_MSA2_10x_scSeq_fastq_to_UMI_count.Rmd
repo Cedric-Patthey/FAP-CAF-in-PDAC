@@ -1,0 +1,333 @@
+---
+title: "orthotopic_transplant_MSA2_scSeq_Cell_ranger_5May2024"
+author: "Cedric"
+date: "2024-05-04"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Summary
+The following code describes the processing of single cell RNAseq data from fastq files to raw UMI count for the 10x Chromium data generated in the in vivo MSA-2 treatment experiment depicted in figure 5 and 6 of Cumming et al, 2025.
+The input data consists of 12 pairs of (paired-end) fastq files corresponding to 12 samples. 
+The raw sequence data as well as raw umi count are available on ArrayExpress with accession number E-MTAB-14940. 
+
+The code was run on the server Rackham on Uppmax made available by the National Academic Infrastructure for Supercomputing in Sweden (NAISS). It must therefore be adapted to the user's environement to reproduce the same output. 
+
+fastq files from Novaseq run 30Apr2024 are processed to umi count using cell ranger. 
+From the 2x 150bp reads, the barcode is extracted from read 1 and the genic sequence is extracted from read 2
+
+# PEAR merging
+The PE reads are merged with PEAR to increase sequence quality and remove adapters. the -k option is used to keep the unassembled R2 in original orientation
+After merging, the barcode reads (named R1) are extracted as the frist 28 bp of the merged read pair or the first 28 bp of the unmerged R1 reads. 
+The cDNA reads (named R2) are extracted as the 60th to last bp of the assembled reads, reverse complemented. Or as the full R2 sequence for unassembled reads. 
+
+Pear_10x.sh
+```{bash}
+#!/bin/bash -l
+
+#SBATCH -A NAISS2023-22-1275
+#SBATCH -p node -n 20
+#SBATCH -t 28:00:00
+#SBATCH -J pear
+
+# run as sbatch pear_10x.sh <in_r1.fastq.gz> <in_r2.fastq.gz> <outname>
+# where the input files are called rootname_R1.fastq.gz and rootname_R2.fastq.gz
+
+
+# copies the necessary files to scratch
+cp ${1} $SNIC_TMP/R1.fastq.gz
+cp ${2} $SNIC_TMP/R2.fastq.gz
+cp Parse_10x_peared.py $SNIC_TMP/
+
+# takes note of the working directory
+pwd=$(pwd)
+
+# moves to scratch
+cd $SNIC_TMP
+
+# loads required modules
+module load bioinfo-tools
+module load pear/0.9.10
+module load biopython
+
+# Runs pear
+gunzip R1.fastq.gz
+gunzip R2.fastq.gz
+
+pear -k -f R1.fastq -r R2.fastq -o Pear -j 18
+
+python Parse_10x_peared.py Pear
+
+gzip Pear_R1.fastq
+gzip Pear_R2.fastq
+
+cp Pear_R1.fastq.gz $pwd/${3}_R1.fastq.gz
+cp Pear_R2.fastq.gz $pwd/${3}_R2.fastq.gz
+```
+
+Parse_10x_peared.py
+```{python}
+import sys
+from Bio import SeqIO
+
+# run as python Parse_10x_peared.py <rootname>
+# where the pear output files are called rootname.assembled.fastq, rootname.unassembled.forward.fastq and rootname.unassembled.reverse.fastq
+# the -k option should be use to run pear to keep the R2 unassembled reads in original orientation
+
+rootname=sys.argv[1]
+merged_fq=rootname+".assembled.fastq"
+fwd_orphan_fq=rootname+".unassembled.forward.fastq"
+rev_orphan_fq=rootname+".unassembled.reverse.fastq"
+outfile_R1=rootname+"_R1.fastq"
+outfile_R2=rootname+"_R2.fastq"
+
+# Exctracts bc R1 and genic R2 from merged reads
+with open(outfile_R1, "w") as f, open(outfile_R2, "w") as g:
+    peared_sequences = SeqIO.parse(open(merged_fq, 'rt'),'fastq')
+    end = False
+    bc_seqs=[]
+    genic_seqs=[]
+    i=1
+    j=0
+
+    for record in peared_sequences:
+        bc=record[0:28]
+        bc.description=''
+        bc_seqs.append(bc)
+        
+        genic=record.reverse_complement()
+        genic.id=record.id
+        genic=genic[:-60]
+        genic.description=''
+        genic_seqs.append(genic)
+        if i==1000000:
+            j=j+1
+            SeqIO.write(bc_seqs, f, "fastq")
+            SeqIO.write(genic_seqs, g, "fastq")
+            sys.stdout.write(str(j)+"M merged pairs processed\n")
+            i=0
+            bc_seqs=[]
+            genic_seqs=[]
+        i=i+1
+    SeqIO.write(bc_seqs, f, "fastq")
+    SeqIO.write(genic_seqs, g, "fastq")
+
+# Exctarcts bc R1 from unassembled forward
+with open(outfile_R1, "a") as f:
+    fwd_orphan_sequences = SeqIO.parse(open(fwd_orphan_fq, 'rt'),'fastq')
+    end = False
+    bc_seqs=[]
+    i=1
+    j=0
+    for record in fwd_orphan_sequences:
+        bc=record[0:28]
+        bc.description=''
+        bc_seqs.append(bc)
+        
+        if i==1000000:
+            j=j+1
+            SeqIO.write(bc_seqs, f, "fastq")
+            sys.stdout.write(str(j)+"M unpaired fwd reads processed\n")
+            i=0
+            bc_seqs=[]
+            genic_seqs=[]
+        i=i+1
+    SeqIO.write(bc_seqs, f, "fastq")
+        
+
+# Extracts genic R2 from unassembled reverse
+with open(outfile_R2, "a") as g:
+    rev_orphan_sequences = SeqIO.parse(open(rev_orphan_fq, 'rt'),'fastq')
+    end = False
+    genic_seqs=[]
+    i=1
+    j=0
+    for record in rev_orphan_sequences:
+        genic=record
+        genic.description=''
+        genic_seqs.append(genic)
+        
+        if i==1000000:
+            j=j+1
+            SeqIO.write(genic_seqs, g, "fastq")
+            sys.stdout.write(str(j)+"M unpaired rev reads processed\n")
+            i=0
+            bc_seqs=[]
+            genic_seqs=[]
+        i=i+1
+    SeqIO.write(genic_seqs, g, "fastq")
+
+```
+
+
+```{bash}
+sbatch Pear_10x.sh DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_1/P31158_1001_S1_L001_R1_001.fastq.gz DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_1/P31158_1001_S1_L001_R2_001.fastq.gz s1
+
+sbatch Pear_10x.sh DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_2/P31158_1002_S2_L001_R1_001.fastq.gz DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_2/P31158_1002_S2_L001_R2_001.fastq.gz s2
+
+sbatch Pear_10x.sh DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_3/P31158_1003_S3_L001_R1_001.fastq.gz DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_3/P31158_1003_S3_L001_R2_001.fastq.gz s3
+
+sbatch Pear_10x.sh DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_4/P31158_1004_S4_L001_R1_001.fastq.gz DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_4/P31158_1004_S4_L001_R2_001.fastq.gz s4
+
+sbatch Pear_10x.sh DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_5/P31158_1005_S5_L001_R1_001.fastq.gz DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_5/P31158_1005_S5_L001_R2_001.fastq.gz s5
+
+sbatch Pear_10x.sh DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_6/P31158_1006_S6_L001_R1_001.fastq.gz DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_6/P31158_1006_S6_L001_R2_001.fastq.gz s6
+
+sbatch Pear_10x.sh DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_7/P31158_1007_S7_L001_R1_001.fastq.gz DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_7/P31158_1007_S7_L001_R2_001.fastq.gz s7
+
+sbatch Pear_10x.sh DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_8/P31158_1008_S8_L001_R1_001.fastq.gz DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_8/P31158_1008_S8_L001_R2_001.fastq.gz s8
+
+sbatch Pear_10x.sh DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_9/P31158_1009_S9_L001_R1_001.fastq.gz DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_9/P31158_1009_S9_L001_R2_001.fastq.gz s9
+
+sbatch Pear_10x.sh DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_10/P31158_1010_S10_L001_R1_001.fastq.gz DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_10/P31158_1010_S10_L001_R2_001.fastq.gz s10
+
+sbatch Pear_10x.sh DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_11/P31158_1011_S11_L001_R1_001.fastq.gz DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_11/P31158_1011_S11_L001_R2_001.fastq.gz s11
+
+sbatch Pear_10x.sh DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_12/P31158_1012_S12_L001_R1_001.fastq.gz DataDelivery_2024-04-29_18-29-36_ngisthlm00742/Sample_12/P31158_1012_S12_L001_R2_001.fastq.gz s12
+```
+
+The fastq files are moved to directories and given an illumina-like name
+```{bash}
+mkdir peared_cut_fastq
+
+i=1
+
+while [ $i -le 12 ]
+do
+  mkdir peared_cut_fastq/s${i}_peared_cut
+  mv s${i}_R1.fastq.gz peared_cut_fastq/s${i}_peared_cut/s${i}_S${i}_L001_R1_001.fastq.gz
+  mv s${i}_R2.fastq.gz peared_cut_fastq/s${i}_peared_cut/s${i}_S${i}_L001_R2_001.fastq.gz
+  i=$((i+1))
+done
+```
+
+Cell ranger is run with mappable genome from 10May2024 based on GRCm39 Ensembl 109 release protein coding genes supplemented with foreign DNA (SV40, tGFP, mKate2, mCherry, EGFP). The code for generating the Cell Ranger mappable genome directory and associated annotation files is described in R markdown `Musmu_GRCm39_Ens109_26Feb2024.Rmd` 
+cr_count.sh
+```{bash}
+#!/bin/bash -l
+
+#SBATCH -A NAISS2023-22-1118
+#SBATCH -p node -n 20
+#SBATCH -t 32:00:00
+#SBATCH -J cr_count
+
+# run as cr_count.sh <path/to/fastqs/> <ref_genome_dir> <output_dir_name> <expected_n_cells>
+
+# copies the necessary files to scratch
+cp -r ${1}  $SNIC_TMP/infq
+cp -r ${2}  $SNIC_TMP/inref
+
+# takes note of the working directory
+pwd=$(pwd)
+
+# moves to scratch
+cd $SNIC_TMP
+
+# loads required modules
+module load bioinfo-tools
+module load cellranger
+
+# Runs cellranger count
+cellranger count --id=${3} \
+                   --transcriptome=inref \
+                   --fastqs=infq \
+                   --expect-cells=${4} \
+                   --localcores=18 \
+                   --localmem=112
+
+# copies output files back to working directory
+cp -r $3 $pwd
+```
+
+```{bash}
+sbatch cr_count.sh peared_cut_fastq/s1_peared_cut ~/PDAC_storage/nobackup/Cedric/Genomes_Transcriptomes/Musmu/Musmu_protcod_GRCm39.109_26Jun2023/Musmu_CellRanger_mappable_genome_CP_10May2024 cr_count_s1 2166
+
+sbatch cr_count.sh peared_cut_fastq/s2_peared_cut ~/PDAC_storage/nobackup/Cedric/Genomes_Transcriptomes/Musmu/Musmu_protcod_GRCm39.109_26Jun2023/Musmu_CellRanger_mappable_genome_CP_10May2024 cr_count_s2 2503
+
+sbatch cr_count.sh peared_cut_fastq/s3_peared_cut ~/PDAC_storage/nobackup/Cedric/Genomes_Transcriptomes/Musmu/Musmu_protcod_GRCm39.109_26Jun2023/Musmu_CellRanger_mappable_genome_CP_10May2024 cr_count_s3 4279
+
+sbatch cr_count.sh peared_cut_fastq/s4_peared_cut ~/PDAC_storage/nobackup/Cedric/Genomes_Transcriptomes/Musmu/Musmu_protcod_GRCm39.109_26Jun2023/Musmu_CellRanger_mappable_genome_CP_10May2024 cr_count_s4 2444
+
+sbatch cr_count.sh peared_cut_fastq/s5_peared_cut ~/PDAC_storage/nobackup/Cedric/Genomes_Transcriptomes/Musmu/Musmu_protcod_GRCm39.109_26Jun2023/Musmu_CellRanger_mappable_genome_CP_10May2024 cr_count_s5 4254
+
+sbatch cr_count.sh peared_cut_fastq/s6_peared_cut ~/PDAC_storage/nobackup/Cedric/Genomes_Transcriptomes/Musmu/Musmu_protcod_GRCm39.109_26Jun2023/Musmu_CellRanger_mappable_genome_CP_10May2024 cr_count_s6 6000
+
+sbatch cr_count.sh peared_cut_fastq/s7_peared_cut ~/PDAC_storage/nobackup/Cedric/Genomes_Transcriptomes/Musmu/Musmu_protcod_GRCm39.109_26Jun2023/Musmu_CellRanger_mappable_genome_CP_10May2024 cr_count_s7 3583
+
+sbatch cr_count.sh peared_cut_fastq/s8_peared_cut ~/PDAC_storage/nobackup/Cedric/Genomes_Transcriptomes/Musmu/Musmu_protcod_GRCm39.109_26Jun2023/Musmu_CellRanger_mappable_genome_CP_10May2024 cr_count_s8 1321
+
+sbatch cr_count.sh peared_cut_fastq/s9_peared_cut ~/PDAC_storage/nobackup/Cedric/Genomes_Transcriptomes/Musmu/Musmu_protcod_GRCm39.109_26Jun2023/Musmu_CellRanger_mappable_genome_CP_10May2024 cr_count_s9 3988
+
+sbatch cr_count.sh peared_cut_fastq/s10_peared_cut ~/PDAC_storage/nobackup/Cedric/Genomes_Transcriptomes/Musmu/Musmu_protcod_GRCm39.109_26Jun2023/Musmu_CellRanger_mappable_genome_CP_10May2024 cr_count_s10 2190
+
+sbatch cr_count.sh peared_cut_fastq/s11_peared_cut ~/PDAC_storage/nobackup/Cedric/Genomes_Transcriptomes/Musmu/Musmu_protcod_GRCm39.109_26Jun2023/Musmu_CellRanger_mappable_genome_CP_10May2024 cr_count_s11 3910
+
+sbatch cr_count.sh peared_cut_fastq/s12_peared_cut ~/PDAC_storage/nobackup/Cedric/Genomes_Transcriptomes/Musmu/Musmu_protcod_GRCm39.109_26Jun2023/Musmu_CellRanger_mappable_genome_CP_10May2024 cr_count_s12 2209
+```
+
+files are retrieved
+```{bash}
+i=1
+
+while [ $i -le 12 ]
+do
+  mkdir s${i}_CRcount
+  mv cr_count_s${i}/outs/filtered_feature_bc_matrix.h5 s${i}_CRcount/
+  mv cr_count_s${i}/outs/web_summary.html s${i}_CRcount/
+  mv cr_count_s${i}/outs/metrics_summary.csv s${i}_CRcount/
+  
+  i=$((i+1))
+done  
+```
+
+The 12 h5 files are merged into a single one
+```{r}
+library(Seurat)
+library(tidyverse)
+library(DropletUtils)
+
+s1_SO <- CreateSeuratObject(count=Read10X_h5("s1_filtered_feature_bc_matrix.h5"), project = "S1")
+s2_SO <- CreateSeuratObject(count=Read10X_h5("s2_filtered_feature_bc_matrix.h5"), project = "S2")
+s3_SO <- CreateSeuratObject(count=Read10X_h5("s3_filtered_feature_bc_matrix.h5"), project = "S3")
+s4_SO <- CreateSeuratObject(count=Read10X_h5("s4_filtered_feature_bc_matrix.h5"), project = "S4")
+s5_SO <- CreateSeuratObject(count=Read10X_h5("s5_filtered_feature_bc_matrix.h5"), project = "S5")
+s6_SO <- CreateSeuratObject(count=Read10X_h5("s6_filtered_feature_bc_matrix.h5"), project = "S6")
+s7_SO <- CreateSeuratObject(count=Read10X_h5("s7_filtered_feature_bc_matrix.h5"), project = "S7")
+s8_SO <- CreateSeuratObject(count=Read10X_h5("s8_filtered_feature_bc_matrix.h5"), project = "S8")
+s9_SO <- CreateSeuratObject(count=Read10X_h5("s9_filtered_feature_bc_matrix.h5"), project = "S9")
+s10_SO <- CreateSeuratObject(count=Read10X_h5("s10_filtered_feature_bc_matrix.h5"), project = "S10")
+s11_SO <- CreateSeuratObject(count=Read10X_h5("s11_filtered_feature_bc_matrix.h5"), project = "S11")
+s12_SO <- CreateSeuratObject(count=Read10X_h5("s12_filtered_feature_bc_matrix.h5"), project = "S12")
+
+Orthotopic_in_vivo_MSA2_12s_SO<-merge(s1_SO, y = list(s2_SO, s3_SO, s4_SO, s5_SO, s6_SO, s7_SO, s8_SO, s9_SO, s10_SO, s11_SO, s12_SO), add.cell.ids = paste("S", 1:12, sep=""))
+
+DropletUtils::write10xCounts(path = "Orthotopic_in_vivo_MSA2_CR_count.h5", x = Orthotopic_in_vivo_MSA2_12s_SO@assays$RNA@counts,  gene.symbol = rownames(Orthotopic_in_vivo_MSA2_12s_SO), type = "HDF5")
+
+
+# verify it can load 
+SO_h5<-CreateSeuratObject(Read10X_h5("Orthotopic_in_vivo_MSA2_CR_count.h5"))
+```
+
+
+h5 is converted to MEX using Seurat. 
+```{r}
+SO <- CreateSeuratObject(count=Read10X_h5("Orthotopic_in_vivo_MSA2_filtered_feature_bc_matrix.h5"))
+
+# Extract data
+counts <- GetAssayData(SO, slot = "counts")
+features <- rownames(counts)
+barcodes <- colnames(counts)
+
+# Save barcodes, features, and matrix in MEX format
+write10xCounts("Orthotopic_in_vivo_MSA2_CR_count", counts)
+```
+
+
+
+
+
+
+

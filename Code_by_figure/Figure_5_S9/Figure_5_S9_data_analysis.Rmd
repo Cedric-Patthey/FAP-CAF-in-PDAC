@@ -1,0 +1,1788 @@
+---
+title: "Orthotopic_transplant_MSA2_scSeq_Figure_5_S9"
+author: "Joshua"
+date: "2024-04-30"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Summary
+The following code describes the analysis of single cell RNAseq data from in vivo MSA2 treatments of tumour bearing mice. This code was used to produce figures 5 and S9 of Cumming et al, 2025. 
+
+The input data is the raw UMI count from the single cell RNA-seq data generated with 10x Chromium for 12 samples. The raw fastq files are available on ArraExpress with accession number E-MTAB-14940.  The raw UMI count tables and the output of the present code (a Seurat objects as RDS file called `Ortho.Tumors.MSA2.integrated.RDS`) are available on ArrayExpress.
+
+The code to generate the raw umi count is described in the R markdown file called `Orthotopic_in_vivo_MSA2_10x_scSeq_fastq_to_UMI_count.Rmd`
+
+The related sample metadata was prepared manually and is available on ArrayExpress in the file `Orthotopic_in_vivo_MSA2_10x_scSeq_sample_metadata.txt`
+
+# Dependencies
+```{r}
+library(Seurat)  # version 4.1.0
+library(tidyverse)
+library(DoubletFinder)  # version 2.0.3
+
+library(SCPA)  # version 1.5.3
+library(msigdbr)  # version 7.5.1
+library(patchwork)
+```
+
+
+The count is loaded into Seurat
+```{r}
+Ortho_in_vivo_MSA2_12S_SO<-CreateSeuratObject(counts = Read10X_h5(filename = "Orthotopic_in_vivo_MSA2_CR_count.h5"))
+```
+
+The samples are separated into distinct objects.  They are normalized and scaled and dimentionality reduction with the same initial parameters. 
+The clusters are observed including markers and quality metrics. The seurat object is then subsetted to remove low-quality clusters and re-normalized and re-clustered. 
+Doublet removal is performed on each sample indivitually. 
+```{r}
+S1 <- subset(Ortho_in_vivo_MSA2_12S_SO, subset = orig.ident=="S1")
+S1[["percent.mt"]] <- PercentageFeatureSet(S1, pattern = "^mt-")
+S1 <- NormalizeData(S1, normalization.method = "LogNormalize", scale.factor = 10000)
+S1 <- FindVariableFeatures(S1, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S1)
+S1 <- ScaleData(S1, features = all.genes)
+S1 <- RunPCA(S1, features = VariableFeatures(object = S1))
+DimPlot(S1, reduction = "pca")
+S1 <- FindNeighbors(S1, dims = 1:50)
+S1 <- FindClusters(S1, resolution = 1.2)
+S1 <- RunUMAP(S1, dims = 1:50)
+DimPlot(S1, reduction = "umap")
+VlnPlot(S1, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
+VlnPlot(S1, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+dim(S1)
+```
+
+```{r}
+S1 <- subset(S1, idents = c("0", "2", "3", "4", "5", "7", "9", "11", "12", "13", "14", "15"))
+S1 <- NormalizeData(S1, normalization.method = "LogNormalize", scale.factor = 10000)
+S1 <- FindVariableFeatures(S1, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S1)
+S1 <- ScaleData(S1, features = all.genes)
+S1 <- RunPCA(S1, features = VariableFeatures(object = S1))
+DimPlot(S1, reduction = "pca")
+S1 <- FindNeighbors(S1, dims = 1:50)
+S1 <- FindClusters(S1, resolution = 0.8)
+S1 <- RunUMAP(S1, dims = 1:50)
+DimPlot(S1, reduction = "umap")
+VlnPlot(S1, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA")
+VlnPlot(S1, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3)
+```
+
+```{r}
+sweep.res.1 <- paramSweep_v3(S1) 
+sweep.stats.1 <- summarizeSweep(sweep.res.1, GT = FALSE) 
+bcmvn.1 <- find.pK(sweep.stats.1)
+nExp.1 <- round(ncol(S1) * 0.023)  # expected doublets
+S1 <- doubletFinder_v3(S1, pN = 0.25, pK = 0.03, nExp = nExp.1, PCs = 1:10)
+DF.name = colnames(S1@meta.data)[grepl("DF.classification", colnames(S1@meta.data))]
+cowplot::plot_grid(S1 = 2, DimPlot(S1, group.by = "ident") + NoAxes(),
+    DimPlot(S1, group.by = DF.name) + NoAxes())
+VlnPlot(S1, features = "nFeature_RNA", group.by = DF.name, pt.size = 0.1)
+S1_singlets = S1[, S1@meta.data[, DF.name] == "Singlet"]
+DimPlot(S1_singlets, reduction = "umap")
+VlnPlot(S1_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA")
+S1_singlets <- subset(S1_singlets, subset = nFeature_RNA > 500 & percent.mt < 10)
+VlnPlot(S1_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+```
+
+```{r}
+S2 <- subset(Ortho_in_vivo_MSA2_12S_SO, subset = orig.ident=="S2")
+S2[["percent.mt"]] <- PercentageFeatureSet(S2, pattern = "^mt-")
+S2 <- NormalizeData(S2, normalization.method = "LogNormalize", scale.factor = 10000)
+S2 <- FindVariableFeatures(S2, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S2)
+S2 <- ScaleData(S2, features = all.genes)
+S2 <- RunPCA(S2, features = VariableFeatures(object = S2))
+DimPlot(S2, reduction = "pca")
+S2 <- FindNeighbors(S2, dims = 1:50)
+S2 <- FindClusters(S2, resolution = 1.2)
+S2 <- RunUMAP(S2, dims = 1:50)
+DimPlot(S2, reduction = "umap")
+VlnPlot(S2, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
+VlnPlot(S2, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+dim(S2)
+```
+
+```{r}
+S2 <- subset(S2, idents = c("0", "1", "2", "3", "4", "8", "9", "10", "11", "12", "14", "15", "16", "17", "18"))
+S2 <- NormalizeData(S2, normalization.method = "LogNormalize", scale.factor = 10000)
+S2 <- FindVariableFeatures(S2, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S2)
+S2 <- ScaleData(S2, features = all.genes)
+S2 <- RunPCA(S2, features = VariableFeatures(object = S2))
+DimPlot(S2, reduction = "pca")
+S2 <- FindNeighbors(S2, dims = 1:50)
+S2 <- FindClusters(S2, resolution = 0.8)
+S2 <- RunUMAP(S2, dims = 1:50)
+DimPlot(S2, reduction = "umap")
+VlnPlot(S2, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA")
+VlnPlot(S2, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+```
+
+```{r}
+sweep.res.2 <- paramSweep_v3(S2) 
+sweep.stats.2 <- summarizeSweep(sweep.res.2, GT = FALSE) 
+bcmvn.2 <- find.pK(sweep.stats.2)
+nExp.2 <- round(ncol(S2) * 0.023)  # expected doublets
+S2 <- doubletFinder_v3(S2, pN = 0.25, pK = 0.3, nExp = nExp.2, PCs = 1:10)
+DF.name = colnames(S2@meta.data)[grepl("DF.classification", colnames(S2@meta.data))]
+cowplot::plot_grid(S2 = 2, DimPlot(S2, group.by = "ident") + NoAxes(),
+    DimPlot(S2, group.by = DF.name) + NoAxes())
+VlnPlot(S2, features = "nFeature_RNA", group.by = DF.name, pt.size = 0.1)
+S2_singlets = S2[, S2@meta.data[, DF.name] == "Singlet"]
+DimPlot(S2_singlets, reduction = "umap")
+VlnPlot(S2_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA")
+VlnPlot(S2_singlets, features = c("Epcam", "Dcn", "Ptprc"), assay = "RNA")
+S2_singlets <- subset(S2_singlets, subset = nFeature_RNA > 500 & percent.mt < 10)
+VlnPlot(S2_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 1)
+```
+
+```{r}
+S3 <- subset(Ortho_in_vivo_MSA2_12S_SO, subset = orig.ident=="S3")
+S3[["percent.mt"]] <- PercentageFeatureSet(S3, pattern = "^mt-")
+S3 <- NormalizeData(S3, normalization.method = "LogNormalize", scale.factor = 10000)
+S3 <- FindVariableFeatures(S3, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S3)
+S3 <- ScaleData(S3, features = all.genes)
+S3 <- RunPCA(S3, features = VariableFeatures(object = S3))
+DimPlot(S3, reduction = "pca")
+S3 <- FindNeighbors(S3, dims = 1:50)
+S3 <- FindClusters(S3, resolution = 0.6)
+S3 <- RunUMAP(S3, dims = 1:50)
+DimPlot(S3, reduction = "umap")
+VlnPlot(S3, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
+VlnPlot(S3, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+dim(S3)
+```
+
+```{r}
+S3 <- subset(S3, idents = c("0", "1", "2", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "33", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44"))
+S3 <- NormalizeData(S3, normalization.method = "LogNormalize", scale.factor = 10000)
+S3 <- FindVariableFeatures(S3, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S3)
+S3 <- ScaleData(S3, features = all.genes)
+S3 <- RunPCA(S3, features = VariableFeatures(object = S3))
+DimPlot(S3, reduction = "pca")
+S3 <- FindNeighbors(S3, dims = 1:50)
+S3 <- FindClusters(S3, resolution = 0.8)
+S3 <- RunUMAP(S3, dims = 1:50)
+DimPlot(S3, reduction = "umap")
+VlnPlot(S3, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+VlnPlot(S3, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+```
+
+```{r}
+sweep.res.3 <- paramSweep_v3(S3) 
+sweep.stats.3 <- summarizeSweep(sweep.res.3, GT = FALSE) 
+bcmvn.3 <- find.pK(sweep.stats.3)
+nExp.3 <- round(ncol(S3) * 0.069)  # expected doublets
+S3 <- doubletFinder_v3(S3, pN = 0.25, pK = 0.005, nExp = nExp.3, PCs = 1:10)
+DF.name = colnames(S3@meta.data)[grepl("DF.classification", colnames(S3@meta.data))]
+cowplot::plot_grid(S3 = 2, DimPlot(S3, group.by = "ident") + NoAxes(),
+    DimPlot(S3, group.by = DF.name) + NoAxes())
+VlnPlot(S3, features = "nFeature_RNA", group.by = DF.name, pt.size = 0.1)
+S3_singlets = S3[, S3@meta.data[, DF.name] == "Singlet"]
+DimPlot(S3_singlets, reduction = "umap")
+VlnPlot(S3_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA")
+S3_singlets <- subset(S3_singlets, subset = nFeature_RNA > 500 & percent.mt < 10)
+VlnPlot(S3_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+```
+
+```{r}
+S4 <- subset(Ortho_in_vivo_MSA2_12S_SO, subset = orig.ident=="S4")
+S4[["percent.mt"]] <- PercentageFeatureSet(S4, pattern = "^mt-")
+S4 <- NormalizeData(S4, normalization.method = "LogNormalize", scale.factor = 10000)
+S4 <- FindVariableFeatures(S4, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S4)
+S4 <- ScaleData(S4, features = all.genes)
+S4 <- RunPCA(S4, features = VariableFeatures(object = S4))
+DimPlot(S4, reduction = "pca")
+S4 <- FindNeighbors(S4, dims = 1:50)
+S4 <- FindClusters(S4, resolution = 1.2)
+S4 <- RunUMAP(S4, dims = 1:50)
+DimPlot(S4, reduction = "umap")
+VlnPlot(S4, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
+VlnPlot(S4, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+dim(S4)
+```
+
+```{r}
+S4 <- subset(S4, idents = c("0", "1", "2", "4", "5", "6", "7", "9", "11", "12", "13", "14", "15", "16"))
+S4 <- NormalizeData(S4, normalization.method = "LogNormalize", scale.factor = 10000)
+S4 <- FindVariableFeatures(S4, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S4)
+S4 <- ScaleData(S4, features = all.genes)
+S4 <- RunPCA(S4, features = VariableFeatures(object = S4))
+DimPlot(S4, reduction = "pca")
+S4 <- FindNeighbors(S4, dims = 1:50)
+S4 <- FindClusters(S4, resolution = 0.8)
+S4 <- RunUMAP(S4, dims = 1:50)
+DimPlot(S4, reduction = "umap")
+VlnPlot(S4, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA")
+```
+
+```{r}
+sweep.res.4 <- paramSweep_v3(S4) 
+sweep.stats.4 <- summarizeSweep(sweep.res.4, GT = FALSE) 
+bcmvn.4 <- find.pK(sweep.stats.4)
+nExp.4 <- round(ncol(S4) * 0.023)  # expected doublets
+S4 <- doubletFinder_v3(S4, pN = 0.25, pK = 0.28, nExp = nExp.4, PCs = 1:10)
+DF.name = colnames(S4@meta.data)[grepl("DF.classification", colnames(S4@meta.data))]
+cowplot::plot_grid(S4 = 2, DimPlot(S4, group.by = "ident") + NoAxes(),
+    DimPlot(S4, group.by = DF.name) + NoAxes())
+VlnPlot(S4, features = "nFeature_RNA", group.by = DF.name, pt.size = 0.1)
+S4_singlets = S4[, S4@meta.data[, DF.name] == "Singlet"]
+DimPlot(S4_singlets, reduction = "umap")
+VlnPlot(S4_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA")
+S4_singlets <- subset(S4_singlets, subset = nFeature_RNA > 500 & percent.mt < 10)
+VlnPlot(S4_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+```
+
+```{r}
+S5 <- subset(Ortho_in_vivo_MSA2_12S_SO, subset = orig.ident=="S5")
+S5[["percent.mt"]] <- PercentageFeatureSet(S5, pattern = "^mt-")
+S5 <- NormalizeData(S5, normalization.method = "LogNormalize", scale.factor = 10000)
+S5 <- FindVariableFeatures(S5, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S5)
+S5 <- ScaleData(S5, features = all.genes)
+S5 <- RunPCA(S5, features = VariableFeatures(object = S5))
+DimPlot(S5, reduction = "pca")
+S5 <- FindNeighbors(S5, dims = 1:50)
+S5 <- FindClusters(S5, resolution = 1.2)
+S5 <- RunUMAP(S5, dims = 1:50)
+DimPlot(S5, reduction = "umap")
+VlnPlot(S5, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
+VlnPlot(S5, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+dim(S5)
+```
+
+```{r}
+S5 <- subset(S5, idents = c("0", "1", "2", "5", "7", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "20", "21", "22", "23", "24", "25", "26"))
+S5 <- NormalizeData(S5, normalization.method = "LogNormalize", scale.factor = 10000)
+S5 <- FindVariableFeatures(S5, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S5)
+S5 <- ScaleData(S5, features = all.genes)
+S5 <- RunPCA(S5, features = VariableFeatures(object = S5))
+DimPlot(S5, reduction = "pca")
+S5 <- FindNeighbors(S5, dims = 1:50)
+S5 <- FindClusters(S5, resolution = 0.8)
+S5 <- RunUMAP(S5, dims = 1:50)
+DimPlot(S5, reduction = "umap")
+VlnPlot(S5, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA")
+VlnPlot(S5, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+```
+
+```{r}
+sweep.res.5 <- paramSweep_v3(S5) 
+sweep.stats.5 <- summarizeSweep(sweep.res.5, GT = FALSE) 
+bcmvn.5 <- find.pK(sweep.stats.5)
+nExp.5 <- round(ncol(S5) * 0.046)  # expected doublets
+S5 <- doubletFinder_v3(S5, pN = 0.25, pK = 0.03, nExp = nExp.5, PCs = 1:10)
+DF.name = colnames(S5@meta.data)[grepl("DF.classification", colnames(S5@meta.data))]
+cowplot::plot_grid(S5 = 2, DimPlot(S5, group.by = "ident") + NoAxes(),
+    DimPlot(S5, group.by = DF.name) + NoAxes())
+VlnPlot(S5, features = "nFeature_RNA", group.by = DF.name, pt.size = 0.1)
+S5_singlets = S5[, S5@meta.data[, DF.name] == "Singlet"]
+DimPlot(S5_singlets, reduction = "umap")
+VlnPlot(S5_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+S5_singlets <- subset(S5_singlets, subset = nFeature_RNA > 500 & percent.mt < 10)
+VlnPlot(S5_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+```
+
+```{r}
+S6 <- subset(Ortho_in_vivo_MSA2_12S_SO, subset = orig.ident=="S6")
+S6[["percent.mt"]] <- PercentageFeatureSet(S6, pattern = "^mt-")
+S6 <- NormalizeData(S6, normalization.method = "LogNormalize", scale.factor = 10000)
+S6 <- FindVariableFeatures(S6, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S6)
+S6 <- ScaleData(S6, features = all.genes)
+S6 <- RunPCA(S6, features = VariableFeatures(object = S6))
+DimPlot(S6, reduction = "pca")
+S6 <- FindNeighbors(S6, dims = 1:50)
+S6 <- FindClusters(S6, resolution = 1.2)
+S6 <- RunUMAP(S6, dims = 1:50)
+DimPlot(S6, reduction = "umap")
+VlnPlot(S6, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
+VlnPlot(S6, features = c("Lum", "Epcam", "Ptprc", "S100a8"), ncol = 3, pt.size = 0)
+dim(S6)
+```
+Library S6 is discarded because of low quality 
+
+```{r}
+S7 <- subset(Ortho_in_vivo_MSA2_12S_SO, subset = orig.ident=="S7")
+S7[["percent.mt"]] <- PercentageFeatureSet(S7, pattern = "^mt-")
+S7 <- NormalizeData(S7, normalization.method = "LogNormalize", scale.factor = 10000)
+S7 <- FindVariableFeatures(S7, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S7)
+S7 <- ScaleData(S7, features = all.genes)
+S7 <- RunPCA(S7, features = VariableFeatures(object = S7))
+DimPlot(S7, reduction = "pca")
+S7 <- FindNeighbors(S7, dims = 1:50)
+S7 <- FindClusters(S7, resolution = 1.2)
+S7 <- RunUMAP(S7, dims = 1:50)
+DimPlot(S7, reduction = "umap")
+VlnPlot(S7, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
+VlnPlot(S7, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+dim(S7)
+```
+
+```{r}
+S7 <- subset(S7, idents = c("0", "1", "3", "5", "6", "8", "9", "10", "11", "12", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24"))
+S7 <- NormalizeData(S7, normalization.method = "LogNormalize", scale.factor = 10000)
+S7 <- FindVariableFeatures(S7, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S7)
+S7 <- ScaleData(S7, features = all.genes)
+S7 <- RunPCA(S7, features = VariableFeatures(object = S7))
+DimPlot(S7, reduction = "pca")
+S7 <- FindNeighbors(S7, dims = 1:50)
+S7 <- FindClusters(S7, resolution = 0.8)
+S7 <- RunUMAP(S7, dims = 1:50)
+DimPlot(S7, reduction = "umap")
+VlnPlot(S7, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+VlnPlot(S7, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+```
+
+```{r}
+sweep.res.7 <- paramSweep_v3(S7) 
+sweep.stats.7 <- summarizeSweep(sweep.res.7, GT = FALSE) 
+bcmvn.7 <- find.pK(sweep.stats.7)
+nExp.7 <- round(ncol(S7) * 0.046)  # expected doublets
+S7 <- doubletFinder_v3(S7, pN = 0.25, pK = 0.22, nExp = nExp.7, PCs = 1:10)
+DF.name = colnames(S7@meta.data)[grepl("DF.classification", colnames(S7@meta.data))]
+cowplot::plot_grid(S7 = 2, DimPlot(S7, group.by = "ident") + NoAxes(),
+    DimPlot(S7, group.by = DF.name) + NoAxes())
+VlnPlot(S7, features = "nFeature_RNA", group.by = DF.name, pt.size = 0.1)
+S7_singlets = S7[, S7@meta.data[, DF.name] == "Singlet"]
+DimPlot(S7_singlets, reduction = "umap")
+VlnPlot(S7_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+S7_singlets <- subset(S7_singlets, subset = nFeature_RNA > 500 & percent.mt < 10)
+VlnPlot(S7_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+```
+
+```{r}
+S8 <- subset(Ortho_in_vivo_MSA2_12S_SO, subset = orig.ident=="S8")
+S8[["percent.mt"]] <- PercentageFeatureSet(S8, pattern = "^mt-")
+S8 <- NormalizeData(S8, normalization.method = "LogNormalize", scale.factor = 10000)
+S8 <- FindVariableFeatures(S8, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S8)
+S8 <- ScaleData(S8, features = all.genes)
+S8 <- RunPCA(S8, features = VariableFeatures(object = S8))
+DimPlot(S8, reduction = "pca")
+S8 <- FindNeighbors(S8, dims = 1:50)
+S8 <- FindClusters(S8, resolution = 1.2)
+S8 <- RunUMAP(S8, dims = 1:50)
+DimPlot(S8, reduction = "umap")
+VlnPlot(S8, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
+VlnPlot(S8, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 1)
+dim(S8)
+```
+
+```{r}
+S8 <- subset(S8, idents = c("0", "1", "2", "3", "4", "5", "6", "7", "9", "10", "11", "13"))
+S8 <- NormalizeData(S8, normalization.method = "LogNormalize", scale.factor = 10000)
+S8 <- FindVariableFeatures(S8, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S8)
+S8 <- ScaleData(S8, features = all.genes)
+S8 <- RunPCA(S8, features = VariableFeatures(object = S8))
+DimPlot(S8, reduction = "pca")
+S8 <- FindNeighbors(S8, dims = 1:50)
+S8 <- FindClusters(S8, resolution = 0.8)
+S8 <- RunUMAP(S8, dims = 1:50)
+DimPlot(S8, reduction = "umap")
+VlnPlot(S8, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+```
+
+```{r}
+sweep.res.8 <- paramSweep_v3(S8) 
+sweep.stats.8 <- summarizeSweep(sweep.res.8, GT = FALSE) 
+bcmvn.8 <- find.pK(sweep.stats.8)
+nExp.8 <- round(ncol(S8) * 0.016)  # expected doublets
+S8 <- doubletFinder_v3(S8, pN = 0.25, pK = 0.29, nExp = nExp.8, PCs = 1:10)
+DF.name = colnames(S8@meta.data)[grepl("DF.classification", colnames(S8@meta.data))]
+cowplot::plot_grid(S8 = 2, DimPlot(S8, group.by = "ident") + NoAxes(),
+    DimPlot(S8, group.by = DF.name) + NoAxes())
+VlnPlot(S8, features = "nFeature_RNA", group.by = DF.name, pt.size = 0.1)
+S8_singlets = S8[, S8@meta.data[, DF.name] == "Singlet"]
+DimPlot(S8_singlets, reduction = "umap")
+VlnPlot(S8_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+S8_singlets <- subset(S8_singlets, subset = nFeature_RNA > 500 & percent.mt < 10)
+VlnPlot(S8_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+```
+
+```{r}
+S9 <- subset(Ortho_in_vivo_MSA2_12S_SO, subset = orig.ident=="S9")
+S9[["percent.mt"]] <- PercentageFeatureSet(S9, pattern = "^mt-")
+S9 <- NormalizeData(S9, normalization.method = "LogNormalize", scale.factor = 10000)
+S9 <- FindVariableFeatures(S9, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S9)
+S9 <- ScaleData(S9, features = all.genes)
+S9 <- RunPCA(S9, features = VariableFeatures(object = S9))
+DimPlot(S9, reduction = "pca")
+S9 <- FindNeighbors(S9, dims = 1:50)
+S9 <- FindClusters(S9, resolution = 1.2)
+S9 <- RunUMAP(S9, dims = 1:50)
+DimPlot(S9, reduction = "umap")
+VlnPlot(S9, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
+VlnPlot(S9, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+dim(S9)
+```
+
+```{r}
+S9 <- subset(S9, idents = c("0", "1", "2", "3", "6", "7", "8", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20"))
+S9 <- NormalizeData(S9, normalization.method = "LogNormalize", scale.factor = 10000)
+S9 <- FindVariableFeatures(S9, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S9)
+S9 <- ScaleData(S9, features = all.genes)
+S9 <- RunPCA(S9, features = VariableFeatures(object = S9))
+DimPlot(S9, reduction = "pca")
+S9 <- FindNeighbors(S9, dims = 1:50)
+S9 <- FindClusters(S9, resolution = 0.8)
+S9 <- RunUMAP(S9, dims = 1:50)
+DimPlot(S9, reduction = "umap")
+VlnPlot(S9, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+VlnPlot(S9, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+```
+
+```{r}
+sweep.res.9 <- paramSweep_v3(S9) 
+sweep.stats.9 <- summarizeSweep(sweep.res.9, GT = FALSE) 
+bcmvn.9 <- find.pK(sweep.stats.9)
+nExp.9 <- round(ncol(S9) * 0.046)  # expected doublets
+S9 <- doubletFinder_v3(S9, pN = 0.25, pK = 0.26, nExp = nExp.9, PCs = 1:10)
+DF.name = colnames(S9@meta.data)[grepl("DF.classification", colnames(S9@meta.data))]
+cowplot::plot_grid(S9 = 2, DimPlot(S9, group.by = "ident") + NoAxes(),
+    DimPlot(S9, group.by = DF.name) + NoAxes())
+VlnPlot(S9, features = "nFeature_RNA", group.by = DF.name, pt.size = 0.1)
+S9_singlets = S9[, S9@meta.data[, DF.name] == "Singlet"]
+DimPlot(S9_singlets, reduction = "umap")
+VlnPlot(S9_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+S9_singlets <- subset(S9_singlets, subset = nFeature_RNA > 500 & percent.mt < 10)
+VlnPlot(S9_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+```
+
+```{r}
+S10 <- subset(Ortho_in_vivo_MSA2_12S_SO, subset = orig.ident=="S10")
+S10[["percent.mt"]] <- PercentageFeatureSet(S10, pattern = "^mt-")
+S10 <- NormalizeData(S10, normalization.method = "LogNormalize", scale.factor = 10000)
+S10 <- FindVariableFeatures(S10, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S10)
+S10 <- ScaleData(S10, features = all.genes)
+S10 <- RunPCA(S10, features = VariableFeatures(object = S10))
+DimPlot(S10, reduction = "pca")
+S10 <- FindNeighbors(S10, dims = 1:50)
+S10 <- FindClusters(S10, resolution = 1.2)
+S10 <- RunUMAP(S10, dims = 1:50)
+DimPlot(S10, reduction = "umap")
+VlnPlot(S10, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
+VlnPlot(S10, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+dim(S10)
+```
+
+```{r}
+S10 <- subset(S10, idents = c("0", "2", "3", "4", "5", "7", "8", "9", "11", "12", "13", "14", "15", "16", "17", "18", "19"))
+S10 <- NormalizeData(S10, normalization.method = "LogNormalize", scale.factor = 10000)
+S10 <- FindVariableFeatures(S10, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S10)
+S10 <- ScaleData(S10, features = all.genes)
+S10 <- RunPCA(S10, features = VariableFeatures(object = S10))
+DimPlot(S10, reduction = "pca")
+S10 <- FindNeighbors(S10, dims = 1:50)
+S10 <- FindClusters(S10, resolution = 0.8)
+S10 <- RunUMAP(S10, dims = 1:50)
+DimPlot(S10, reduction = "umap")
+VlnPlot(S10, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+VlnPlot(S10, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+```
+
+```{r}
+sweep.res.10 <- paramSweep_v3(S10) 
+sweep.stats.10 <- summarizeSweep(sweep.res.10, GT = FALSE) 
+bcmvn.10 <- find.pK(sweep.stats.10)
+nExp.10 <- round(ncol(S10) * 0.023)  # expected doublets
+S10 <- doubletFinder_v3(S10, pN = 0.25, pK = 0.2, nExp = nExp.10, PCs = 1:10)
+DF.name = colnames(S10@meta.data)[grepl("DF.classification", colnames(S10@meta.data))]
+cowplot::plot_grid(S10 = 2, DimPlot(S10, group.by = "ident") + NoAxes(),
+    DimPlot(S10, group.by = DF.name) + NoAxes())
+VlnPlot(S10, features = "nFeature_RNA", group.by = DF.name, pt.size = 0.1)
+S10_singlets = S10[, S10@meta.data[, DF.name] == "Singlet"]
+DimPlot(S10_singlets, reduction = "umap")
+VlnPlot(S10_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+S10_singlets <- subset(S10_singlets, subset = nFeature_RNA > 500 & percent.mt < 10)
+VlnPlot(S10_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+```
+
+```{r}
+S11 <- subset(Ortho_in_vivo_MSA2_12S_SO, subset = orig.ident=="S11")
+S11[["percent.mt"]] <- PercentageFeatureSet(S11, pattern = "^mt-")
+S11 <- NormalizeData(S11, normalization.method = "LogNormalize", scale.factor = 10000)
+S11 <- FindVariableFeatures(S11, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S11)
+S11 <- ScaleData(S11, features = all.genes)
+S11 <- RunPCA(S11, features = VariableFeatures(object = S11))
+DimPlot(S11, reduction = "pca")
+S11 <- FindNeighbors(S11, dims = 1:50)
+S11 <- FindClusters(S11, resolution = 1.2)
+S11 <- RunUMAP(S11, dims = 1:50)
+DimPlot(S11, reduction = "umap")
+VlnPlot(S11, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
+VlnPlot(S11, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+dim(S11)
+```
+
+```{r}
+S11 <- subset(S11, idents = c("0", "2", "4", "5", "6", "7", "9", "10", "11", "12", "13", "14", "15", "16", "18", "19", "20", "21", "22", "24"))
+S11 <- NormalizeData(S11, normalization.method = "LogNormalize", scale.factor = 10000)
+S11 <- FindVariableFeatures(S11, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S11)
+S11 <- ScaleData(S11, features = all.genes)
+S11 <- RunPCA(S11, features = VariableFeatures(object = S11))
+DimPlot(S11, reduction = "pca")
+S11 <- FindNeighbors(S11, dims = 1:50)
+S11 <- FindClusters(S11, resolution = 0.8)
+S11 <- RunUMAP(S11, dims = 1:50)
+DimPlot(S11, reduction = "umap")
+VlnPlot(S11, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+VlnPlot(S11, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+```
+
+```{r}
+sweep.res.11 <- paramSweep_v3(S11) 
+sweep.stats.11 <- summarizeSweep(sweep.res.11, GT = FALSE) 
+bcmvn.11 <- find.pK(sweep.stats.11)
+nExp.11 <- round(ncol(S11) * 0.046)  # expected doublets
+S11 <- doubletFinder_v3(S11, pN = 0.25, pK = 0.14, nExp = nExp.11, PCs = 1:10)
+DF.name = colnames(S11@meta.data)[grepl("DF.classification", colnames(S11@meta.data))]
+cowplot::plot_grid(S11 = 2, DimPlot(S11, group.by = "ident") + NoAxes(),
+    DimPlot(S11, group.by = DF.name) + NoAxes())
+VlnPlot(S11, features = "nFeature_RNA", group.by = DF.name, pt.size = 0.1)
+S11_singlets = S11[, S11@meta.data[, DF.name] == "Singlet"]
+DimPlot(S11_singlets, reduction = "umap")
+VlnPlot(S11_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+S11_singlets <- subset(S11_singlets, subset = nFeature_RNA > 500 & percent.mt < 10)
+VlnPlot(S11_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+```
+
+```{r}
+S12 <- subset(Ortho_in_vivo_MSA2_12S_SO, subset = orig.ident=="S12")
+S12[["percent.mt"]] <- PercentageFeatureSet(S12, pattern = "^mt-")
+S12 <- NormalizeData(S12, normalization.method = "LogNormalize", scale.factor = 10000)
+S11 <- FindVariableFeatures(S12, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S12)
+S12 <- ScaleData(S11, features = all.genes)
+S12 <- RunPCA(S12, features = VariableFeatures(object = S12))
+DimPlot(S12, reduction = "pca")
+S12 <- FindNeighbors(S12, dims = 1:50)
+S12 <- FindClusters(S12, resolution = 1.2)
+S12 <- RunUMAP(S12, dims = 1:50)
+DimPlot(S12, reduction = "umap")
+VlnPlot(S12, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
+VlnPlot(S12, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+dim(S12)
+```
+
+```{r}
+S12 <- subset(S12, idents = c("1", "2", "3", "5", "6", "7", "9", "10", "11", "12", "13", "16", "18"))
+S12 <- NormalizeData(S12, normalization.method = "LogNormalize", scale.factor = 10000)
+S12 <- FindVariableFeatures(S12, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S12)
+S12 <- ScaleData(S12, features = all.genes)
+S12 <- RunPCA(S12, features = VariableFeatures(object = S12))
+DimPlot(S12, reduction = "pca")
+S12 <- FindNeighbors(S12, dims = 1:50)
+S12 <- FindClusters(S12, resolution = 0.8)
+S12 <- RunUMAP(S12, dims = 1:50)
+DimPlot(S12, reduction = "umap")
+VlnPlot(S12, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+VlnPlot(S12, features = c("Epcam", "Dcn", "Ptprc"), ncol = 3, pt.size = 0)
+```
+
+```{r}
+sweep.res.12 <- paramSweep_v3(S12) 
+sweep.stats.12 <- summarizeSweep(sweep.res.12, GT = FALSE) 
+bcmvn.12 <- find.pK(sweep.stats.12)
+nExp.12 <- round(ncol(S12) * 0.023)  # expected doublets
+S12 <- doubletFinder_v3(S12, pN = 0.25, pK = 0.01, nExp = nExp.12, PCs = 1:10)
+DF.name = colnames(S12@meta.data)[grepl("DF.classification", colnames(S12@meta.data))]
+cowplot::plot_grid(S12 = 2, DimPlot(S12, group.by = "ident") + NoAxes(),
+    DimPlot(S12, group.by = DF.name) + NoAxes())
+VlnPlot(S12, features = "nFeature_RNA", group.by = DF.name, pt.size = 0.1)
+S12_singlets = S12[, S12@meta.data[, DF.name] == "Singlet"]
+DimPlot(S12_singlets, reduction = "umap")
+VlnPlot(S12_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+S12_singlets <- subset(S12_singlets, subset = nFeature_RNA > 500 & percent.mt < 10)
+VlnPlot(S12_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA", pt.size = 0)
+```
+
+```{r}
+#saveRDS(S1_singlets, "S1_singlets.RDS")
+#saveRDS(S2_singlets, "S2_singlets.RDS")
+#saveRDS(S3_singlets, "S3_singlets.RDS")
+#saveRDS(S4_singlets, "S4_singlets.RDS")
+#saveRDS(S5_singlets, "S5_singlets.RDS")
+#saveRDS(S7_singlets, "S7_singlets.RDS")
+#saveRDS(S8_singlets, "S8_singlets.RDS")
+#saveRDS(S9_singlets, "S9_singlets.RDS")
+#saveRDS(S10_singlets, "S10_singlets.RDS")
+#saveRDS(S11_singlets, "S11_singlets.RDS")
+#saveRDS(S12_singlets, "S12_singlets.RDS")
+```
+
+The treatment (MSA-2 vs behicle control) is introduced in the metadata
+```{r}
+S1_singlets@meta.data <- S1_singlets@meta.data %>%
+  mutate("Treatment" = "Ctrl")
+
+S2_singlets@meta.data <- S2_singlets@meta.data %>%
+  mutate("Treatment" = "MSA-2")
+
+S3_singlets@meta.data <- S3_singlets@meta.data %>%
+  mutate("Treatment" = "Ctrl")
+
+S4_singlets@meta.data <- S4_singlets@meta.data %>%
+  mutate("Treatment" = "MSA-2")
+
+S5_singlets@meta.data <- S5_singlets@meta.data %>%
+  mutate("Treatment" = "Ctrl")
+
+S7_singlets@meta.data <- S7_singlets@meta.data %>%
+  mutate("Treatment" = "Ctrl")
+
+S8_singlets@meta.data <- S8_singlets@meta.data %>%
+  mutate("Treatment" = "MSA-2")
+
+S9_singlets@meta.data <- S9_singlets@meta.data %>%
+  mutate("Treatment" = "Ctrl")
+
+S10_singlets@meta.data <- S10_singlets@meta.data %>%
+  mutate("Treatment" = "MSA-2")
+
+S11_singlets@meta.data <- S11_singlets@meta.data %>%
+  mutate("Treatment" = "Ctrl")
+
+S12_singlets@meta.data <- S12_singlets@meta.data %>%
+  mutate("Treatment" = "MSA-2")
+```
+
+The Samples are merged into a single Seurat object. Sample 6 is left out because of low quality. 
+```{r}
+Ortho.Tumors.MSA2 <- merge(x = S1_singlets, y = list(S2_singlets, S3_singlets, S4_singlets, S5_singlets, S7_singlets, S8_singlets, S9_singlets, S10_singlets, S11_singlets, S12_singlets))
+```
+
+The samples are integrated. The cell cycle is regressed using the cell cycle gene lists from the Regev lab (https://github.com/scverse/scanpy_usage/blob/master/180209_cell_cycle/data/regev_lab_cell_cycle_genes.txt) 
+```{r}
+human.s.genes<-c("MCM5", "PCNA", "TYMS", "FEN1", "MCM2", "MCM4", "RRM1", "UNG", "GINS2", "MCM6", "CDCA7", "DTL", "PRIM1", "UHRF1", "MLF1IP", "HELLS", "RFC2", "RPA2", "NASP", "RAD51AP1", "GMNN", "WDR76", "SLBP", "CCNE2", "UBR7", "POLD3", "MSH2", "ATAD2", "RAD51", "RRM2", "CDC45", "CDC6", "EXO1", "TIPIN", "DSCC1", "BLM", "CASP8AP2", "USP1", "CLSPN", "POLA1", "CHAF1B", "BRIP1", "E2F8") 
+
+human.g2m.genes<-c("HMGB2", "CDK1", "NUSAP1", "UBE2C", "BIRC5", "TPX2", "TOP2A", "NDC80", "CKS2", "NUF2", "CKS1B", "MKI67", "TMPO", "CENPF", "TACC3", "FAM64A", "SMC4", "CCNB2", "CKAP2L", "CKAP2", "AURKB", "BUB1", "KIF11", "ANP32E", "TUBB4B", "GTSE1", "KIF20B", "HJURP", "CDCA3", "HN1", "CDC20", "TTK", "CDC25C", "KIF2C", "RANGAP1", "NCAPD2", "DLGAP5", "CDCA2", "CDCA8", "ECT2", "KIF23", "HMMR", "AURKA", "PSRC1", "ANLN", "LBR", "CKAP5", "CENPE", "CTCF", "NEK2", "G2E3", "GAS2L3", "CBX5", "CENPA")
+
+sample.list <- SplitObject(Ortho.Tumors.MSA2, split.by = "orig.ident")
+sample.list <- lapply(X = sample.list, FUN = function(x) {
+    x <- NormalizeData(x)
+    x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 3000)
+})
+features <- SelectIntegrationFeatures(object.list = sample.list, nfeatures = 3000)
+sample.list <- lapply(X = sample.list, FUN = function(x) {
+    x <- CellCycleScoring(x, s.features = human.s.genes, g2m.features = human.g2m.genes, set.ident = TRUE)
+    x <- ScaleData(x, vars.to.regress = c("S.Score", "G2M.Score"), features = features, verbose = FALSE)
+    x <- RunPCA(x, features = features, verbose = FALSE)
+})
+sample.anchors <- FindIntegrationAnchors(object.list = sample.list, anchor.features = features, reduction = "rpca")
+Ortho.Tumors.MSA2.integrated <- IntegrateData(anchorset = sample.anchors)
+```
+
+```{r}
+Ortho.Tumors.MSA2.integrated <- ScaleData(Ortho.Tumors.MSA2.integrated, verbose = FALSE)
+Ortho.Tumors.MSA2.integrated <- RunPCA(Ortho.Tumors.MSA2.integrated, npcs = 50, verbose = FALSE)
+# Determine percent of variation associated with each PC
+pct <- Ortho.Tumors.MSA2.integrated@reductions$pca@stdev / sum(Ortho.Tumors.MSA2.integrated@reductions$pca@stdev) * 100
+# Determine the difference between variation of PC and subsequent PC
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1),  decreasing = T)[1] + 1 # last point where change of % of variation is more than 0.1%.
+
+Ortho.Tumors.MSA2.integrated <- RunUMAP(Ortho.Tumors.MSA2.integrated, reduction = "pca", dims = 1:co2)
+Ortho.Tumors.MSA2.integrated <- FindNeighbors(Ortho.Tumors.MSA2.integrated, reduction = "pca", dims = 1:co2)
+Ortho.Tumors.MSA2.integrated <- FindClusters(Ortho.Tumors.MSA2.integrated, resolution = 0.8)
+DimPlot(Ortho.Tumors.MSA2.integrated, reduction = "umap", label = T)
+DimPlot(Ortho.Tumors.MSA2.integrated, reduction = "umap", label = T, split.by = "Treatment")
+```
+
+
+The clusters are annotated based on markers' expression
+```{r}
+Clus.0 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "0", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.1 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "1", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.2 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "2", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.3 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "3", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.4 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "4", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.5 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "5", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.6 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "6", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.7 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "7", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.8 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "8", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.9 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "9", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.10 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "10", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.11 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "11", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.12 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "12", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.13 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "13", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.14 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "14", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.15 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "15", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.16 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "16", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.17 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "17", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.18 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "18", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.19 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "19", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.20 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "20", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.21 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "21", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.22 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "22", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.23 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "23", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.24 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "24", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.25 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "25", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.26 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "26", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Clus.27 <- FindMarkers(Ortho.Tumors.MSA2.integrated, ident.1 = "27", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+```
+
+```{r}
+Neutrophil_markers <- c("S100a8", "S100a9", "G0s2", "Mreg")
+Macrophage_markers <- c("Apoe", "C1qc", "Aif1")
+Epithelial_markers <- c("Epcam", "Cdh1", "Krt19")
+CAF_markers <- c("Dcn", "Lum", "Col1a1")
+T_cell_markers <- c("Cd3d", "Cd3g", "Cd3e")
+Dendritic_cell_markers <- c("Ccr7", "Ccl17", "Cst3")
+B_cells <- c("Ms4a1", "Cd79a")
+Endothelial_cells <- c("Pecam1", "Cd34")
+CAP_markers <- c("Rgs5", "Mcam")
+proliferation <- c("Top2a", "Ube2c", "Mki67")
+
+cell_type_markers <- c(Neutrophil_markers, Macrophage_markers, Epithelial_markers, CAF_markers, T_cell_markers, Dendritic_cell_markers, B_cells, Endothelial_cells, CAP_markers, MAST_cells, Acinar_cells, proliferation)
+```
+
+```{r}
+DotPlot(Ortho.Tumors.MSA2.integrated, assay = "RNA", features = cell_type_markers, cols = c("white", "blue")) + theme(axis.text.x = element_text(angle = 45, hjust=1)) 
+```
+
+```{r}
+Ortho.Tumors.MSA2.integrated@meta.data <- Ortho.Tumors.MSA2.integrated@meta.data %>%
+  mutate(Cell_Type_Level_1 = case_when(integrated_snn_res.0.8 == "0" ~ "Immune",
+                               integrated_snn_res.0.8 == "1" ~ "Immune",
+                               integrated_snn_res.0.8 == "2" ~ "Immune",
+                               integrated_snn_res.0.8 == "3" ~ "Immune",
+                               integrated_snn_res.0.8 == "4" ~ "Immune",
+                               integrated_snn_res.0.8 == "5" ~ "CAFs",
+                               integrated_snn_res.0.8 == "6" ~ "Immune",
+                               integrated_snn_res.0.8 == "7" ~ "Immune",
+                               integrated_snn_res.0.8 == "8" ~ "CAFs",
+                               integrated_snn_res.0.8 == "9" ~ "CAFs",
+                               integrated_snn_res.0.8 == "10" ~ "Immune",
+                               integrated_snn_res.0.8 == "11" ~ "Epithelial",
+                               integrated_snn_res.0.8 == "12" ~ "CAFs",
+                               integrated_snn_res.0.8 == "13" ~ "Immune",
+                               integrated_snn_res.0.8 == "14" ~ "Immune",
+                               integrated_snn_res.0.8 == "15" ~ "CAFs",
+                               integrated_snn_res.0.8 == "16" ~ "Immune",
+                               integrated_snn_res.0.8 == "17" ~ "Immune",
+                               integrated_snn_res.0.8 == "18" ~ "Immune",
+                               integrated_snn_res.0.8 == "19" ~ "Epithelial",
+                               integrated_snn_res.0.8 == "20" ~ "Immune",
+                               integrated_snn_res.0.8 == "21" ~ "Immune",
+                               integrated_snn_res.0.8 == "22" ~ "Immune",
+                               integrated_snn_res.0.8 == "23" ~ "Epithelial",
+                               integrated_snn_res.0.8 == "24" ~ "Other",
+                               integrated_snn_res.0.8 == "25" ~ "Other",
+                               integrated_snn_res.0.8 == "26" ~ "CAFs",
+                               integrated_snn_res.0.8 == "27" ~ "Epithelial"
+                               ))
+
+Ortho.Tumors.MSA2.integrated@meta.data <- Ortho.Tumors.MSA2.integrated@meta.data %>%
+  mutate(Cell_Type_Level_2 = case_when(integrated_snn_res.0.8 == "0" ~ "Neutrophils",
+                               integrated_snn_res.0.8 == "1" ~ "Macrophages",
+                               integrated_snn_res.0.8 == "2" ~ "Neutrophils",
+                               integrated_snn_res.0.8 == "3" ~ "Macrophages",
+                               integrated_snn_res.0.8 == "4" ~ "Neutrophils",
+                               integrated_snn_res.0.8 == "5" ~ "CAFs",
+                               integrated_snn_res.0.8 == "6" ~ "Neutrophils",
+                               integrated_snn_res.0.8 == "7" ~ "Macrophages",
+                               integrated_snn_res.0.8 == "8" ~ "CAFs",
+                               integrated_snn_res.0.8 == "9" ~ "CAFs",
+                               integrated_snn_res.0.8 == "10" ~ "Neutrophils",
+                               integrated_snn_res.0.8 == "11" ~ "Epithelial",
+                               integrated_snn_res.0.8 == "12" ~ "CAFs",
+                               integrated_snn_res.0.8 == "13" ~ "Macrophages",
+                               integrated_snn_res.0.8 == "14" ~ "T cells",
+                               integrated_snn_res.0.8 == "15" ~ "CAFs",
+                               integrated_snn_res.0.8 == "16" ~ "Macrophages",
+                               integrated_snn_res.0.8 == "17" ~ "Neutrophils",
+                               integrated_snn_res.0.8 == "18" ~ "Neutrophils",
+                               integrated_snn_res.0.8 == "19" ~ "Epithelial",
+                               integrated_snn_res.0.8 == "20" ~ "Dendritic cells",
+                               integrated_snn_res.0.8 == "21" ~ "Dendritic cells",
+                               integrated_snn_res.0.8 == "22" ~ "B cells",
+                               integrated_snn_res.0.8 == "23" ~ "Epithelial",
+                               integrated_snn_res.0.8 == "24" ~ "Endothelial cells",
+                               integrated_snn_res.0.8 == "25" ~ "CAPs",
+                               integrated_snn_res.0.8 == "26" ~ "CAFs",
+                               integrated_snn_res.0.8 == "27" ~ "Epithelial"
+                               ))
+
+Ortho.Tumors.MSA2.integrated@meta.data <- Ortho.Tumors.MSA2.integrated@meta.data %>%
+  mutate(Cell_Type_Level_3 = case_when(integrated_snn_res.0.8 == "0" ~ "Ccl3+ Neutrophils",
+                               integrated_snn_res.0.8 == "1" ~ "Mmp12+ Macrophages",
+                               integrated_snn_res.0.8 == "2" ~ "Il1r2+ Neutrophils",
+                               integrated_snn_res.0.8 == "3" ~ "S100a4+ Macrophages",
+                               integrated_snn_res.0.8 == "4" ~ "Rsad2+ Neutrophils",
+                               integrated_snn_res.0.8 == "5" ~ "ENG+ iCAFs",
+                               integrated_snn_res.0.8 == "6" ~ "Csf3r+ Neutrophils",
+                               integrated_snn_res.0.8 == "7" ~ "Arg1+ Macrophages",
+                               integrated_snn_res.0.8 == "8" ~ "myCAFs",
+                               integrated_snn_res.0.8 == "9" ~ "Col1a1+ CAFs",
+                               integrated_snn_res.0.8 == "10" ~ "Ccl4+ Neutrophils",
+                               integrated_snn_res.0.8 == "11" ~ "Hmga2+ Epithelial",
+                               integrated_snn_res.0.8 == "12" ~ "WT1+ iCAFs",
+                               integrated_snn_res.0.8 == "13" ~ "Ccl8+ Macrophages",
+                               integrated_snn_res.0.8 == "14" ~ "T cells",
+                               integrated_snn_res.0.8 == "15" ~ "Timp3+ CAFs",
+                               integrated_snn_res.0.8 == "16" ~ "Proliferating Macrophages",
+                               integrated_snn_res.0.8 == "17" ~ "Retnlg+ Neutrophils",
+                               integrated_snn_res.0.8 == "18" ~ "Ngp+ Neutrophils",
+                               integrated_snn_res.0.8 == "19" ~ "Clu+ Epithelial",
+                               integrated_snn_res.0.8 == "20" ~ "H2-Eb1+ Dendritic cells",
+                               integrated_snn_res.0.8 == "21" ~ "Ccl5+ Dendritic cells",
+                               integrated_snn_res.0.8 == "22" ~ "B cells",
+                               integrated_snn_res.0.8 == "23" ~ "Ctsk+ Epithelial",
+                               integrated_snn_res.0.8 == "24" ~ "Endothelial cells",
+                               integrated_snn_res.0.8 == "25" ~ "CAPs",
+                               integrated_snn_res.0.8 == "26" ~ "Rbms3+ CAFs",
+                               integrated_snn_res.0.8 == "27" ~ "Proliferating Epithelial"
+                               ))
+```
+
+```{r}
+#write.table(Clus.0, "Ortho.MSA2.Tumour.Clus.0.txt", sep = "\t")
+#write.table(Clus.1, "Ortho.MSA2.Tumour.Clus.1.txt", sep = "\t")
+#write.table(Clus.2, "Ortho.MSA2.Tumour.Clus.2.txt", sep = "\t")
+#write.table(Clus.3, "Ortho.MSA2.Tumour.Clus.3.txt", sep = "\t")
+#write.table(Clus.4, "Ortho.MSA2.Tumour.Clus.4.txt", sep = "\t")
+#write.table(Clus.5, "Ortho.MSA2.Tumour.Clus.5.txt", sep = "\t")
+#write.table(Clus.6, "Ortho.MSA2.Tumour.Clus.6.txt", sep = "\t")
+#write.table(Clus.7, "Ortho.MSA2.Tumour.Clus.7.txt", sep = "\t")
+#write.table(Clus.8, "Ortho.MSA2.Tumour.Clus.8.txt", sep = "\t")
+#write.table(Clus.9, "Ortho.MSA2.Tumour.Clus.9.txt", sep = "\t")
+#write.table(Clus.10, "Ortho.MSA2.Tumour.Clus.10.txt", sep = "\t")
+#write.table(Clus.11, "Ortho.MSA2.Tumour.Clus.11.txt", sep = "\t")
+#write.table(Clus.12, "Ortho.MSA2.Tumour.Clus.12.txt", sep = "\t")
+#write.table(Clus.13, "Ortho.MSA2.Tumour.Clus.13.txt", sep = "\t")
+#write.table(Clus.14, "Ortho.MSA2.Tumour.Clus.14.txt", sep = "\t")
+#write.table(Clus.15, "Ortho.MSA2.Tumour.Clus.15.txt", sep = "\t")
+#write.table(Clus.16, "Ortho.MSA2.Tumour.Clus.16.txt", sep = "\t")
+#write.table(Clus.17, "Ortho.MSA2.Tumour.Clus.17.txt", sep = "\t")
+#write.table(Clus.18, "Ortho.MSA2.Tumour.Clus.18.txt", sep = "\t")
+#write.table(Clus.19, "Ortho.MSA2.Tumour.Clus.19.txt", sep = "\t")
+#write.table(Clus.20, "Ortho.MSA2.Tumour.Clus.20.txt", sep = "\t")
+#write.table(Clus.21, "Ortho.MSA2.Tumour.Clus.21.txt", sep = "\t")
+#write.table(Clus.22, "Ortho.MSA2.Tumour.Clus.22.txt", sep = "\t")
+#write.table(Clus.23, "Ortho.MSA2.Tumour.Clus.23.txt", sep = "\t")
+#write.table(Clus.24, "Ortho.MSA2.Tumour.Clus.24.txt", sep = "\t")
+#write.table(Clus.25, "Ortho.MSA2.Tumour.Clus.25.txt", sep = "\t")
+#write.table(Clus.26, "Ortho.MSA2.Tumour.Clus.26.txt", sep = "\t")
+#write.table(Clus.27, "Ortho.MSA2.Tumour.Clus.27.txt", sep = "\t")
+```
+
+
+```{r}
+#saveRDS(Ortho.Tumors.MSA2.integrated, "Ortho.Tumors.MSA2.integrated.RDS")
+```
+
+
+# Characterization of single cell data
+```{r}
+Ortho.Tumors.MSA2.integrated <- readRDS("Ortho.Tumors.MSA2.integrated.RDS")
+```
+
+```{r}
+unique(Ortho.Tumors.MSA2.integrated@meta.data$Cell_Type_Level_3)
+```
+
+# Figure 5A
+```{r}
+Fig_5A_plot <- DimPlot(Ortho.Tumors.MSA2.integrated, reduction = "umap", group.by = "Cell_Type_Level_3", order = c("CAPs", "Endothelial cells", "Proliferating Epithelial", "Hmga2+ Epithelial", "Ctsk+ Epithelial", "Clu+ Epithelial", "WT1+ iCAFs", "Timp3+ CAFs", "Rbms3+ CAFs", "myCAFs", "ENG+ iCAFs", "Col1a1+ CAFs", "B cells", "T cells", "H2-Eb1+ Dendritic cells", "Ccl5+ Dendritic cells", "S100a4+ Macrophages", "Proliferating Macrophages", "Mmp12+ Macrophages", "Ccl8+ Macrophages", "Arg1+ Macrophages", "Rsad2+ Neutrophils", "Retnlg+ Neutrophils", "Ngp+ Neutrophils", "Il1r2+ Neutrophils", "Csf3r+ Neutrophils", "Ccl4+ Neutrophils", "Ccl3+ Neutrophils"), label = T) + NoLegend()
+
+if (!dir.exists("Figure_5")) {dir.create("Figure_5")}
+ggsave(plot = Fig_5A_plot, "Figure_5A_UMAP.pdf", width = 7.5, height = 7.5, units = "in", path = "Figure_5/")
+```
+
+A function that adds a z-score in the metadata of a seurat object. The signature should be a character vector
+```{r}
+Add_Z<-function(in_SO, in_sig, Z_name){
+  
+  DefaultAssay(in_SO) <- "RNA"
+  #verifies the genes are part of the seurat object
+  in_sig<-in_sig[in_sig %in% rownames(in_SO)]
+  
+   # Genes which are 0 in >95% of cells are removed
+  long_NC <- in_SO@assays$RNA@data[in_sig,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) %>% 
+    group_by(Gene) %>% 
+    summarise(prop_zeros = sum(NC == 0)/n()) %>% 
+    filter(prop_zeros <= 0.95) %>% 
+    select(-prop_zeros)
+    
+  # NC is extracted from the SO
+    long_NC <- in_SO@assays$RNA@data[long_NC$Gene,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) 
+  
+  # Signature scores are calculated for each cell
+  get_zs<-function(in_sign){
+    Z_scores<-long_NC %>%
+      filter(Gene %in% in_sign) %>% 
+      group_by(Gene) %>%
+      mutate(Z = (NC - mean(NC)) / sd(NC)) %>%
+      drop_na() %>% 
+      group_by(Cell) %>%
+      summarise(sign_Z = mean(Z) %>% round(2)) %>%
+      rename(!!Z_name := sign_Z)
+    
+    return(Z_scores)
+  }
+  
+  Z_df<-get_zs(in_sig) 
+ 
+  # Z-score is added to the metadata
+  in_SO@meta.data<-in_SO@meta.data %>% 
+    rownames_to_column("Cell") %>% 
+    left_join(Z_df, by="Cell") %>% 
+    column_to_rownames("Cell")
+  
+  return(in_SO)
+}
+```
+
+```{r}
+CAFs <- subset(Ortho.Tumors.MSA2.integrated, idents = c("5", "8", "9", "12", "15", "26"))
+```
+
+Markers from day6 co-culture are loaded. The code describing the generation of the marker list is found in R markdown `Figure_3_S6_data_analysis.Rmd`. The marker lists are also found in supplementary table S2 in the paper.
+```{r}
+# from PSC.singlets.rPCA.integrated.Cluster.4.Markers.txt
+Cocul.ifCAF.markers <- c("Rsad2", "Oasl1", "Cxcl10", "Cmpk2", "Ifit3b", "Ifit3", "Igtp", "Gbp2", "Gbp3", "Ccl5", "Mx1", "Oasl2", "Ifih1", "Ifi44", "Stat2", "Rnd1", "Isg15", "Ifit1", "Phf11b", "Mx2", "Oas1b", "Tgtp1", "Usp18", "Gbp7", "Apol9a", "Tmem140", "Irf7", "Parp14", "Tgtp2", "Oas1g", "Dhx58", "Irgm2", "H2-Q6", "Herc6", "Iigp1", "Samd9l", "Atf3", "Ddx58", "Cxcl2", "Ifi204", "Gdf15", "Isg20", "Slc3a2", "Phf11d", "Oas3", "Adar", "Apol9b", "Ifi35", "Rnf213", "Ifi47", "Trim56", "Tor3a", "Mndal", "Ddx60", "H2-Q7", "Stat1", "Irgm1", "Gm4070", "Tapbp", "Pnpt1", "Enpp4", "Tlr3", "Trafd1", "H2-T10", "Trim30a", "Clic4", "Irf1", "Parp10", "Oas2", "Marchf5", "Aftph", "Zc3hav1", "Trim30d", "Eif2ak2", "H2-K1", "Ifi205", "Trex1", "Znfx1", "Ppp1r15a", "Trim25", "Nfkb2", "Il33", "Slfn2", "Parp12", "Rtp4", "Tap1", "Slfn8", "Xaf1", "Gem", "H4c9", "Ttc39c", "H2-T22", "Csrnp1", "H2aw", "Trim21", "Pnp", "Atf4", "Sqstm1", "Ifi203", "Tent5a", "Ddit3", "Lgals9", "P2rx7", "Parp9", "Arhgef2", "Relb", "Nfkb1", "Ccl2", "Daxx", "Aars", "Tnfaip3", "Irf9", "Ccnl1", "Gadd45b", "Arl14ep", "Tnip1", "Wdfy1", "Ifit2", "H2-T23", "Klf6", "Polr2g", "Chka", "Vcam1", "Tlr2", "H1f2", "Ifrd1")
+
+
+CAFs <- Add_Z(CAFs, in_sig = Cocul.ifCAF.markers, Z_name = "Co-culture ifCAF Z-Score")
+
+
+```
+
+```{r}
+vln_plot <- VlnPlot(CAFs, features = "Co-culture ifCAF Z-Score", group.by = "Treatment", pt.size = 0)
+
+# Extract the data used in the plot
+plot_data <- vln_plot$data
+
+# Overlay narrow, black, and transparent points on each violin group
+p1 <- vln_plot + 
+  geom_jitter(data = plot_data, aes(x = as.factor(ident), 
+                                    y = `Co-culture ifCAF Z-Score`), 
+              size = 0.5, alpha = 1, position = position_jitterdodge(dodge.width = 0.9, jitter.width = 0.25)) + NoLegend()
+```
+
+
+```{r}
+# Create the original violin plot with points
+vln_plot <- VlnPlot(CAFs, features = "Co-culture ifCAF Z-Score", 
+                    group.by = "Cell_Type_Level_3", split.by = "Treatment", 
+                    pt.size = 0)
+
+# Extract the data used in the plot
+plot_data <- vln_plot$data
+
+# Overlay narrow, black, and transparent points on each violin group
+p2 <- vln_plot + 
+  geom_jitter(data = plot_data, aes(x = as.factor(ident), 
+                                    y = `Co-culture ifCAF Z-Score`), 
+              size = 0.5, alpha = 1, position = position_jitterdodge(dodge.width = 0.9, jitter.width = 0.1))
+```
+
+```{r}
+# Combine the plots with the second plot being twice as wide as the first
+Fig_5B_plot <- p1 + p2 + patchwork::plot_layout(ncol = 2, widths = c(1, 2))
+
+if (!dir.exists("Figure_5")) {dir.create("Figure_5")}
+ggsave(plot = Fig_5B_plot, "Figure_5B_ifCAF_Z_Score.pdf", width = 8, height = 4, units = "in", path = "Figure_5/")
+```
+
+Cluster proportions are calculated and plotted
+```{r}
+Ortho.Tumors.MSA2.integrated.meta.data <- Ortho.Tumors.MSA2.integrated@meta.data
+
+Cluster.Proportions <- Ortho.Tumors.MSA2.integrated.meta.data %>%
+  group_by(Treatment, Cell_Type_Level_1, Cell_Type_Level_3, orig.ident) %>%
+  summarise(cell_count = n()) %>%
+  ungroup()
+
+total_cells <- Cluster.Proportions %>%
+  group_by(Treatment, Cell_Type_Level_1, orig.ident) %>%
+  summarise(total_cells = sum(cell_count))
+
+Cluster.Proportions <- merge(Cluster.Proportions, total_cells, by = c("Treatment", "Cell_Type_Level_1", "orig.ident"))
+
+Cluster.Proportions <- Cluster.Proportions %>%
+  mutate(proportion = cell_count / total_cells)
+
+Immune.Proportions <- Cluster.Proportions %>%
+  filter(Cell_Type_Level_1 %in% "Immune")
+
+# Create a dataframe to store all possible combinations of Treatment, orig.ident, and Cell_Type_Level_3
+all_combinations_immune <- expand.grid(orig.ident = unique(Immune.Proportions$orig.ident),
+                                Cell_Type_Level_3 = unique(Immune.Proportions$Cell_Type_Level_3))
+
+# Perform a left join with all_combinations to ensure all combinations are present
+Immune.Proportions <- left_join(all_combinations_immune, Immune.Proportions, 
+                           by = c("orig.ident", "Cell_Type_Level_3"))
+
+# Replace missing values with 0 for proportion
+Immune.Proportions$proportion[is.na(Immune.Proportions$proportion)] <- 0
+Immune.Proportions$cell_count[is.na(Immune.Proportions$cell_count)] <- 0
+
+# Replace missing total_cells with the total_cells value for the corresponding orig.ident
+Immune.Proportions <- Immune.Proportions %>%
+  group_by(orig.ident) %>%
+  mutate(total_cells = ifelse(is.na(total_cells), na.omit(total_cells)[1], total_cells),
+         Cell_Type_Level_1 = ifelse(is.na(Cell_Type_Level_1), na.omit(Cell_Type_Level_1)[1], Cell_Type_Level_1),
+         Treatment = ifelse(is.na(Treatment), na.omit(Treatment)[1], Treatment)) %>%
+  ungroup()
+
+CAF.Proportions <- Cluster.Proportions %>%
+  filter(Cell_Type_Level_1 %in% "CAFs")
+
+Epithelial.Proportions <- Cluster.Proportions %>%
+  filter(Cell_Type_Level_1 %in% "Epithelial")
+
+# Create a dataframe to store all possible combinations of Treatment, orig.ident, and Cell_Type_Level_3
+all_combinations_epithelial <- expand.grid(orig.ident = unique(Epithelial.Proportions$orig.ident),
+                                Cell_Type_Level_3 = unique(Epithelial.Proportions$Cell_Type_Level_3))
+
+# Perform a left join with all_combinations to ensure all combinations are present
+Epithelial.Proportions <- left_join(all_combinations_epithelial, Epithelial.Proportions, 
+                           by = c("orig.ident", "Cell_Type_Level_3"))
+
+# Replace missing values with 0 for proportion
+Epithelial.Proportions$proportion[is.na(Epithelial.Proportions$proportion)] <- 0
+Epithelial.Proportions$cell_count[is.na(Epithelial.Proportions$cell_count)] <- 0
+
+# Replace missing total_cells with the total_cells value for the corresponding orig.ident
+Epithelial.Proportions <- Epithelial.Proportions %>%
+  group_by(orig.ident) %>%
+  mutate(total_cells = ifelse(is.na(total_cells), na.omit(total_cells)[1], total_cells),
+         Cell_Type_Level_1 = ifelse(is.na(Cell_Type_Level_1), na.omit(Cell_Type_Level_1)[1], Cell_Type_Level_1),
+         Treatment = ifelse(is.na(Treatment), na.omit(Treatment)[1], Treatment)) %>%
+  ungroup()
+
+test_results_immune <- Immune.Proportions %>%
+  group_by(Cell_Type_Level_3) %>%
+  summarise(p_value = wilcox.test(proportion ~ Treatment)$p.value)
+
+test_results_CAFs <- CAF.Proportions %>%
+  group_by(Cell_Type_Level_3) %>%
+  summarise(p_value = wilcox.test(proportion ~ Treatment)$p.value)
+
+test_results_epithelial <- Epithelial.Proportions %>%
+  group_by(Cell_Type_Level_3) %>%
+  summarise(p_value = wilcox.test(proportion ~ Treatment)$p.value)
+```
+
+# Figure 5C
+```{r}
+desired_order <- test_results_CAFs %>%
+  arrange(p_value)
+
+# Convert Cell_Type_Annotatio to factor with desired order
+CAF.Proportions$Cell_Type_Level_3 <- factor(CAF.Proportions$Cell_Type_Level_3, levels = desired_order$Cell_Type_Level_3)
+
+test_results_CAFs <- test_results_CAFs %>%
+  mutate(significance = case_when(
+    p_value > 0.05 ~ "ns",
+    p_value <= 0.0001 ~ "****",
+    p_value <= 0.001 ~ "***",
+    p_value <= 0.01 ~ "**",
+    p_value <= 0.05 ~ "*",
+    TRUE ~ ""
+  ))
+
+max_y <- max(CAF.Proportions$proportion, na.rm = TRUE) * 1.1
+
+Fig_5C_plot <- ggplot(CAF.Proportions, aes(x = Cell_Type_Level_3, y = proportion, fill = Treatment)) +
+  geom_boxplot(position = position_dodge(width = 0.8)) +
+  labs(x = "Cluster", y = "Proportion", color = "Treatment") +
+  scale_fill_manual(values = c("#F8766D", "#00BFC4")) +  # Specify colors for treatments
+  theme_bw()+ theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Optional: Use a minimal theme
+
+Fig_5C_plot <- Fig_5C_plot + geom_text(data = test_results_CAFs, aes(x = Cell_Type_Level_3, y = max_y, label = significance), position = position_dodge(width = 0.9), inherit.aes = FALSE, color = "black")
+
+if (!dir.exists("Figure_5")) {dir.create("Figure_5")}
+ggsave(plot = Fig_5C_plot, "Figure_5C_CAF_Proportions.pdf", width = 6, height = 4, units = "in", path = "Figure_5/")
+```
+
+# Figure 5D
+```{r}
+unique(test_results_immune$Cell_Type_Level_3)
+
+desired_order <- test_results_immune %>%
+  mutate(Cell_Type_Level_2 = case_when(Cell_Type_Level_3 == "Arg1+ Macrophages" ~ "Macrophages",
+                                       Cell_Type_Level_3 == "B cells" ~ "B cells",
+                                       Cell_Type_Level_3 == "Ccl3+ Neutrophils" ~ "Neutrophils",
+                                       Cell_Type_Level_3 == "Ccl4+ Neutrophils" ~ "Neutrophils",
+                                       Cell_Type_Level_3 == "Ccl5+ Dendritic cells" ~ "Dendritic cells",
+                                       Cell_Type_Level_3 == "Ccl8+ Macrophages" ~ "Macrophages",
+                                       Cell_Type_Level_3 == "Csf3r+ Neutrophils" ~ "Neutrophils",
+                                       Cell_Type_Level_3 == "H2-Eb1+ Dendritic cells" ~ "Dendritic cells",
+                                       Cell_Type_Level_3 == "Il1r2+ Neutrophils" ~ "Neutrophils",
+                                       Cell_Type_Level_3 == "Mmp12+ Macrophages" ~ "Macrophages",
+                                       Cell_Type_Level_3 == "Ngp+ Neutrophils" ~ "Neutrophils",
+                                       Cell_Type_Level_3 == "Proliferating Macrophages" ~ "Macrophages",
+                                       Cell_Type_Level_3 == "Retnlg+ Neutrophils" ~ "Neutrophils",
+                                       Cell_Type_Level_3 == "Rsad2+ Neutrophils" ~ "Neutrophils",
+                                       Cell_Type_Level_3 == "S100a4+ Macrophages" ~ "Macrophages",
+                                       Cell_Type_Level_3 == "T cells" ~ "T cells"))
+# Define the desired order for Cell_Type_Level_2
+desired_order_levels <- c("Neutrophils", "Macrophages", "Dendritic cells", "B cells", "T cells", "MAST cells")
+
+desired_order <- desired_order %>%
+  mutate(Cell_Type_Level_2 = factor(Cell_Type_Level_2, levels = desired_order_levels))
+
+desired_order <- desired_order %>%
+  arrange(Cell_Type_Level_2, p_value)
+
+# Convert Cell_Type_Annotatio to factor with desired order
+Immune.Proportions$Cell_Type_Level_3 <- factor(Immune.Proportions$Cell_Type_Level_3, levels = desired_order$Cell_Type_Level_3)
+
+test_results_immune <- test_results_immune %>%
+  mutate(significance = case_when(
+    p_value > 0.05 ~ "ns",
+    p_value <= 0.0001 ~ "****",
+    p_value <= 0.001 ~ "***",
+    p_value <= 0.01 ~ "**",
+    p_value <= 0.05 ~ "*",
+    TRUE ~ ""
+  ))
+
+max_y <- max(Immune.Proportions$proportion, na.rm = TRUE) * 1.1
+
+
+
+Fig_5D_plot <- ggplot(Immune.Proportions, aes(x = Cell_Type_Level_3, y = proportion, fill = Treatment)) +
+  geom_boxplot(position = position_dodge(width = 0.8)) +
+  labs(x = "Cluster", y = "Proportion", color = "Treatment") +
+  scale_fill_manual(values = c("#F8766D", "#00BFC4")) +  # Specify colors for treatments
+  theme_bw()+ theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Optional: Use a minimal theme
+
+Fig_5D_plot <- Fig_5D_plot + geom_text(data = test_results_immune, aes(x = Cell_Type_Level_3, y = max_y, label = significance), position = position_dodge(width = 0.9), inherit.aes = FALSE, color = "black")
+
+if (!dir.exists("Figure_5")) {dir.create("Figure_5")}
+ggsave(plot = Fig_5D_plot, "Figure_5D_Immune_Proportions.pdf", width = 7.5, height = 5, units = "in", path = "Figure_5/")
+```
+The neutrophils are subsetted and TAN signature loaded. The markers lists were taken from Ng et al, 2024 (PMID 38207030). The marker lists are also found in supplementary table S2 in the present paper. Markers with avg_log2FC>1 are kept  
+```{r}
+Neutrophils <- subset(Ortho.Tumors.MSA2.integrated, idents = c("0", "2", "4", "6", "10", "17", "18"))
+
+# from Ng_et_al_T1_TAN_DEGs.txt
+T1.TAN.Sig <- c("SCIMP", "MRPL52", "BCL2A1B", "BCL2A1D", "BCL2A1A", "CCRL2", "CLEC4N", "GM19951", "EGR1", "LTC4S", "RPS28", "RPL22", "RPL36", "CDKN1A", "H3F3B", "GNGT2", "PPIA", "PTMA", "AA467197", "RPLP1", "RPS27L", "RPS8", "RPS19", "RPSA", "RPL32", "RPS21", "RPL36AL", "RPLP2", "SNRPG", "GM12840", "IL1R2", "DYNLL1", "SIGLECF", "PTGS2", "MIF", "RPS26", "RPL38", "HIST1H1C", "PIM1", "TOMM6", "HEXB", "JUN", "RPL19", "CST3", "RPS20", "RPS2", "FFAR2", "RPL18", "RPS15", "RPL35", "RPS29", "RPL14", "COX8A", "ATP5MPL", "RPS18", "NOP10", "COX7B", "RPL8", "CTSS", "COX7A2", "IER3", "RPL35A", "RPS17", "RPS5", "XBP1", "ATP5MD", "RPL15", "CLEC5A", "RPL26", "FOS", "COX6A1", "MTDH", "RPS15A", "YBX1", "JUNB", "CNBP", "GADD45B", "NME2", "RPLP0", "PTGS1", "RPL12", "ATOX1", "RPS3A1", "NDUFB1-PS", "HIST1H4I", "SNRPE", "HMGB1", "IL1B", "CHCHD2", "RGS10", "IGFBP6", "RPL10A", "RPL11", "TRMT112", "RPS25", "ZFP36", "SUMO2", "IL1A", "CSF1", "HINT1", "CD300C2", "BOLA2", "CREB5", "RPS13", "RPL5", "RPL6", "RPL36A", "ARPP19", "RPS11", "G0S2", "BHLHE40", "DAD1", "MICOS10", "GPR171", "RPL21", "RUNX1", "OST4", "BTF3", "SNRPB", "PFDN2", "PSME2", "POLR2L", "RPS3", "IER2", "H2-K1", "SERBP1", "HNRNPF", "NDUFA7", "RPL39", "RPL13", "SF3B5", "RAN", "MDH2", "MS4A6D", "TMEM14C", "TOMM7", "ATP5G1", "RPS7", "RBX1", "ATP5G2", "NACA", "RPL30", "RPL27A", "SRP9", "SOCS3", "COX5A", "RPS23", "CD74", "P2RY14", "IFI30", "SET", "RPS27", "GM31718", "REEP5", "UQCR11", "ST13", "COX17", "1810037I17RIK", "SNU13", "GSN", "NDUFA2", "COX6C", "CXCL2", "KRTCAP2", "ATP6V0C", "ATP5E", "TNFRSF13B", "SKIL", "TAF10", "EIF3J1", "RPL41", "RPL10", "EGR3", "RPS10", "GRCC10", "RPS16", "MRPS24", "PSMB10", "PARK7", "RPS12", "PGAM1", "ROMO1", "H1F0", "ELOB", "CCL3", "HSP90AB1", "OTULINL", "CMTM7", "COX6B1", "BTG2", "UQCRQ", "PNP", "HK2", "UBE2I", "UQCRB", "ANP32B", "RPL34", "IER3IP1", "TMEM59", "NINJ1", "EIF5B", "NME1", "GM10076", "RHOB", "MRPL42", "RPS24", "MRPS33", "RBM3", "GM20186", "ID1", "NEDD8", "POLR2F", "NDUFS7", "UQCC2", "EMC6", "NPM1", "RPS14", "ATP5J", "HIST1H2BC", "RHEB", "GNG10", "PSMB8", "EEF1D", "DPM3", "RWDD1", "SRP14", "RPL23", "UBA52", "EGLN3", "MT1", "LEPROTL1", "CKS2", "NDUFC1", "ATP5L", "ATP5J2", "LAMTOR2", "PRDX1", "BST2", "TPI1", "POLR1D", "TMCO1", "LLPH", "ERH")
+
+
+# from Ng_et_al_T2_TAN_DEGs.txt
+T2.TAN.Sig <- c("CXCL10", "G0S2", "OSM", "CXCL2", "ISG15", "RSAD2", "PTGS2", "ACOD1", "CD14", "IER3", "NFKBIA", "IL1B", "GBP2", "SRGN", "IFI47", "EGR1", "CXCL3", "TGM2", "PIM1", "BCL2A1B", "CCRL2", "ZFP36", "CCL4", "FOS", "XBP1", "JUNB", "IFIT3", "IFIT1", "BCL2A1A", "DUSP1", "ISG20", "CDKN1A", "SOCS3", "HCAR2", "GADD45B", "IL1R2", "BASP1", "CSTDC4", "GBP5", "CSRNP1", "JUN", "CTSS", "PLAUR", "MARCKSL1", "FTH1", "TREM1", "CD274", "CD9", "IGTP", "ZFP36L1", "ICAM1", "GM20186", "ID1", "BTG2", "CLEC4E", "UPP1", "EGLN3", "SOCS1", "GM12840", "H3F3B", "GM13822", "NINJ1", "CLEC4N", "IFIT2", "RGCC", "SKIL", "IFIT3B", "NFKBID", "CCL3", "COX17", "PLAC8", "PPP1R15A", "IRGM1", "PNP", "SAMSN1", "ZBP1", "RHOH", "THBS1", "IL1RN", "UBC", "CCL6", "IL1A", "NFKBIZ", "ATF3", "RAB20", "TNF", "TES", "NFIL3", "PTAFR", "LY6A", "AY036118", "IER2", "BHLHE40", "PNRC1", "IFI204", "RTP4", "LY6I", "CISH", "H2-K1", "CCR1", "RBPJ", "NR4A1", "STAT1", "BCL2A1D", "CSF1", "ATP6V0C", "GBP7", "BTG1", "PLEK", "PLK3", "TRIB1", "USP18")
+
+# from Ng_et_al_T3_TAN_DEGs.txt
+T3.TAN.Sig <- c("HILPDA", "CCL3", "CSTB", "CXCL3", "CCL4", "SPP1", "FTH1", "CXCL2", "HCAR2", "MIF", "ERO1L", "HSPA1A", "IFRD1", "TPI1", "IL1RN", "PLIN2", "BNIP3", "CTSB", "IER3", "E230032D23RIK", "BASP1", "ATP6V0C", "LDHA", "GADD45B", "CDKN1A", "FAM162A", "FTL1", "JUN", "HSP90AA1", "INHBA", "BSG", "HMOX1", "CCRL2", "F10", "EGR1", "CD274", "CARD19", "TMEM189", "BHLHE40", "HIGD1A", "TIPARP", "GLA", "THBS1", "ATF3", "HK2", "ZEB2", "CD14", "TNFRSF23", "PGAM1", "RGS1", "HSPA1B", "TGIF1", "RNH1", "DDIT3", "EEF1A1", "BRI3", "RBPJ", "EGLN3", "BNIP3L", "CTSL", "PPP1R15A", "1700017B05RIK", "PNRC1", "FNDC3A", "CTSZ", "RPS28", "CD9", "NINJ1", "IRAK2", "XIST", "P4HA1", "CCL6", "HSPA5", "PDCD1LG2", "NFKBIA", "RPL10", "ATP6V1A", "FNIP2", "PIK3AP1", "EEA1", "PRDX6", "NAA50", "TPT1", "CCDC126", "ESD", "ENO1", "ATP6V0D2", "PTGS2", "PFKP", "BCL2A1B", "CD63", "RPL12", "RGCC", "EIF5", "ALKBH5", "LAMP1", "ATP6V1C1", "GADD45G", "CSTDC4", "EIF1", "SLC3A2", "ZFP292", "CD68", "TRA2A", "SRGN", "RPLP2", "SAP18", "SLC31A2", "SAMSN1", "ALDOA", "UPP1", "ITPR2", "MBNL2", "ETF1", "RAB20", "SLC2A1", "ST13", "PGK1", "CLEC4N", "P4HB", "MAFF", "B4GALT1", "TGOLN1", "DDIT4", "PSAP", "PFKL", "NPC2", "FOS", "TOMM20", "A930007I19RIK", "VEGFA", "NPEPPS", "CD53", "CCNL1", "ATP6V0E", "GAPDH", "RPL36", "H3F3B", "RPS8", "NCEH1", "TOMM6", "RPS2", "PLGRKT", "ANKRD33B", "SQSTM1", "RPS20", "ATF4", "RPL23", "FRRS1", "SMOX", "GNA13", "RPLP1", "TNFRSF26", "LGALS3", "RPS27", "KPNA4", "EIF4A1", "CITED2", "UBC", "DUSP5", "HBEGF", "BAX", "RHOV", "ATP6V1E1", "ACOD1", "DOCK10", "GM20406", "RPL8", "NFIL3", "SOAT1", "CSTA2", "DNAJA1", "CSF1", "GPNMB", "RAB9", "SH2B2", "SDCBP", "RPS3A1", "COX17", "SRA1", "G0S2", "NACA", "ARID5B", "FAM50A", "CNOT4", "ANKRD37", "RPL36AL", "SLC7A11", "RHOB", "VMP1", "OSBPL8", "NEK6", "SLC20A1", "RPL18", "RPS5", "CYCS", "CCL9", "PPIA", "ECHDC3", "RPL38", "LAMB3", "RPL30", "MTHFS", "MREG", "RPL19", "RPS26", "PHLDA1", "AMDHD2", "RPL22", "FAU", "LRRFIP2", "ANKRD12", "IL1A", "ATP6AP2", "NPC1", "BCL2A1A", "RPL32", "PRDX1", "NEAT1", "CANX", "MAP3K8", "HSP90B1", "RPL14", "FKBP1A", "PTMA", "RPS15A", "RPL35", "ITGB1", "DNAJB9", "DUSP1", "CLEC4E", "SLC31A1", "IMPA2", "PIM1", "GNS", "RALGDS", "CLEC4D", "ODC1", "MDM2", "EIF3A", "ZFP36L2", "RPS19", "DENR", "RPL26", "1810058I24RIK", "FNIP1", "DEDD2", "SEC61G", "ATF5", "LITAF", "RPL35A", "RPS3", "GPR137B", "HMGA1", "OSM")
+
+```
+
+The mouse orthologs are extracted using our orthology table, available in supplementary table S7 of the paper. The code to generate the orthology table is described in R markdown `Human_mouse_orthology_table_26Nov2019.Rmd`
+```{r}
+Orthology.table.genes <- read.table("Human_mouse_orthology_v1.txt")
+
+T1.TAN.Sig.HomSa.2.MusMu.Sig <- Orthology.table.genes %>% 
+  filter(Orthology.table.genes$Homsa_gene_name %in% T1.TAN.Sig)
+T1.TAN.Sig.HomSa.2.MusMu.Sig <- T1.TAN.Sig.HomSa.2.MusMu.Sig[,4]
+T1.TAN.Sig.HomSa.2.MusMu.Sig <- as.character(unlist(T1.TAN.Sig.HomSa.2.MusMu.Sig))
+
+T2.TAN.Sig.HomSa.2.MusMu.Sig <- Orthology.table.genes %>% 
+  filter(Orthology.table.genes$Homsa_gene_name %in% T2.TAN.Sig)
+T2.TAN.Sig.HomSa.2.MusMu.Sig <- T2.TAN.Sig.HomSa.2.MusMu.Sig[,4]
+T2.TAN.Sig.HomSa.2.MusMu.Sig <- as.character(unlist(T2.TAN.Sig.HomSa.2.MusMu.Sig))
+
+T3.TAN.Sig.HomSa.2.MusMu.Sig <- Orthology.table.genes %>% 
+  filter(Orthology.table.genes$Homsa_gene_name %in% T3.TAN.Sig)
+T3.TAN.Sig.HomSa.2.MusMu.Sig <- T3.TAN.Sig.HomSa.2.MusMu.Sig[,4]
+T3.TAN.Sig.HomSa.2.MusMu.Sig <- as.character(unlist(T3.TAN.Sig.HomSa.2.MusMu.Sig))
+
+Neutrophils <- Add_Z(Neutrophils, in_sig = T1.TAN.Sig.HomSa.2.MusMu.Sig, Z_name = "TAN 1")
+
+Neutrophils <- Add_Z(Neutrophils, in_sig = T2.TAN.Sig.HomSa.2.MusMu.Sig, Z_name = "TAN 2")
+
+Neutrophils <- Add_Z(Neutrophils, in_sig = T3.TAN.Sig.HomSa.2.MusMu.Sig, Z_name = "TAN 3")
+```
+
+# Figure 5E
+```{r}
+Fig_5E_plot <- VlnPlot(Neutrophils, features =  c("TAN 1", "TAN 2", "TAN 3"), pt.size = 0, stack = T, flip = T, fill.by = "ident", group.by = "Cell_Type_Level_3", same.y.lims = T) + NoLegend()
+
+if (!dir.exists("Figure_5")) {dir.create("Figure_5")}
+ggsave(plot = Fig_5E_plot, "Figure_5E_TAN_Subset_Z_Scores.pdf", width = 4, height = 5, units = "in", path = "Figure_5/")
+```
+
+# Figure 5F
+```{r}
+Neutrophil.Subtype.Proportions <- Ortho.Tumors.MSA2.integrated.meta.data %>%
+  filter(Cell_Type_Level_3 %in% c("Il1r2+ Neutrophils", "Retnlg+ Neutrophils", "Rsad2+ Neutrophils", "Ccl3+ Neutrophils", "Ccl4+ Neutrophils", "Csf3r+ Neutrophils", "Ngp+ Neutrophils")) %>%
+  mutate(Neutrophil.Subtype = case_when(Cell_Type_Level_3 == "Il1r2+ Neutrophils" ~ "TAN 1",
+                               Cell_Type_Level_3 == "Retnlg+ Neutrophils" ~ "Other",
+                               Cell_Type_Level_3 == "Rsad2+ Neutrophils" ~ "TAN 2",
+                               Cell_Type_Level_3 == "Ccl3+ Neutrophils" ~ "TAN 3",
+                               Cell_Type_Level_3 == "Ccl4+ Neutrophils" ~ "TAN 3",
+                               Cell_Type_Level_3 == "Csf3r+ Neutrophils" ~ "Other",
+                               Cell_Type_Level_3 == "Ngp+ Neutrophils" ~ "Other"))
+
+Neutrophil.Subtype.Proportions <- Neutrophil.Subtype.Proportions %>%
+  group_by(Treatment, Neutrophil.Subtype, orig.ident) %>%
+  summarise(cell_count = n()) %>%
+  ungroup()
+
+total_cells <- Neutrophil.Subtype.Proportions %>%
+  group_by(Treatment, orig.ident) %>%
+  summarise(total_cells = sum(cell_count))
+
+Neutrophil.Subtype.Proportions <- merge(Neutrophil.Subtype.Proportions, total_cells, by = c("Treatment", "orig.ident"))
+
+Neutrophil.Subtype.Proportions <- Neutrophil.Subtype.Proportions %>%
+  mutate(proportion = cell_count / total_cells)
+
+test_results_Neutrophils <- Neutrophil.Subtype.Proportions %>%
+  group_by(Neutrophil.Subtype) %>%
+  summarise(p_value = wilcox.test(proportion ~ Treatment)$p.value)
+
+test_results_Neutrophils <- test_results_Neutrophils %>%
+  mutate(significance = case_when(
+    p_value > 0.05 ~ "ns",
+    p_value <= 0.0001 ~ "****",
+    p_value <= 0.001 ~ "***",
+    p_value <= 0.01 ~ "**",
+    p_value <= 0.05 ~ "*",
+    TRUE ~ ""
+  ))
+
+max_y <- max(Neutrophil.Subtype.Proportions$proportion, na.rm = TRUE) * 1.1
+
+myplot <- ggplot(Neutrophil.Subtype.Proportions, aes(x = Neutrophil.Subtype, y = proportion, fill = Treatment)) +
+  geom_boxplot(position = position_dodge(width = 0.8)) +
+  labs(x = "Cluster", y = "Proportion", color = "Treatment") +
+  scale_fill_manual(values = c("#F8766D", "#00BFC4")) +  # Specify colors for treatments
+  theme_bw()+ theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Optional: Use a minimal theme
+
+Fig_5F_plot <- myplot + geom_text(data = test_results_Neutrophils, aes(x = Neutrophil.Subtype, y = max_y, label = significance), position = position_dodge(width = 0.9), inherit.aes = FALSE, color = "black")
+
+if (!dir.exists("Figure_5")) {dir.create("Figure_5")}
+ggsave(plot = Fig_5F_plot, "Figure_5F_TAN_Subset_Proportions.pdf", width = 3.5, height = 4, units = "in", path = "Figure_5/")
+```
+
+```{r}
+Neutrophils@meta.data <- Neutrophils@meta.data %>%
+  mutate(Neutrophil.Subtype = case_when(Cell_Type_Level_3 == "Il1r2+ Neutrophils" ~ "TAN 1",
+                               Cell_Type_Level_3 == "Retnlg+ Neutrophils" ~ "Other",
+                               Cell_Type_Level_3 == "Rsad2+ Neutrophils" ~ "TAN 2",
+                               Cell_Type_Level_3 == "Ccl3+ Neutrophils" ~ "TAN 3",
+                               Cell_Type_Level_3 == "Ccl4+ Neutrophils" ~ "TAN 3",
+                               Cell_Type_Level_3 == "Csf3r+ Neutrophils" ~ "Other",
+                               Cell_Type_Level_3 == "Ngp+ Neutrophils" ~ "Other"))
+
+Neutrophils <- SetIdent(Neutrophils, value = "Neutrophil.Subtype")
+
+TAN.2.Markers <- FindMarkers(Neutrophils, ident.1 = "TAN 2", ident.2 = c("TAN 1", "TAN 3", "Other"), assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25)
+TAN.1.Markers <- FindMarkers(Neutrophils, ident.1 = "TAN 1", ident.2 = c("TAN 2", "TAN 3", "Other"), assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25)
+
+#write.table(TAN.2.Markers, "MSA2.In.Vivo.TAN.2.Markers.txt", sep = "\t")
+#write.table(TAN.1.Markers, "MSA2.In.Vivo.TAN.1.Markers.txt", sep = "\t")
+
+VlnPlot(Neutrophils, features = c("Isg15", "Il1r2", "Cst3"), assay = "RNA", pt.size = 0)
+```
+
+# Figure 5G
+```{r}
+test_results_epithelial <- test_results_epithelial %>%
+  mutate(significance = case_when(
+    p_value > 0.05 ~ "ns",
+    p_value <= 0.0001 ~ "****",
+    p_value <= 0.001 ~ "***",
+    p_value <= 0.01 ~ "**",
+    p_value <= 0.05 ~ "*",
+    TRUE ~ ""
+  ))
+
+max_y <- max(Epithelial.Proportions$proportion, na.rm = TRUE) * 1.1
+
+Fig_5G_plot <- ggplot(Epithelial.Proportions, aes(x = Cell_Type_Level_3, y = proportion, fill = Treatment)) +
+  geom_boxplot(position = position_dodge(width = 0.8)) +
+  labs(x = "Cluster", y = "Proportion", color = "Treatment") +
+  scale_fill_manual(values = c("#F8766D", "#00BFC4")) +  # Specify colors for treatments
+  theme_bw()+ theme(axis.text.x = element_text(angle = 45, hjust = 1))  # Optional: Use a minimal theme
+
+Fig_5G_plot <- Fig_5G_plot + geom_text(data = test_results_epithelial, aes(x = Cell_Type_Level_3, y = max_y, label = significance), position = position_dodge(width = 0.9), inherit.aes = FALSE, color = "black")
+
+if (!dir.exists("Figure_5")) {dir.create("Figure_5")}
+ggsave(plot = Fig_5G_plot, "Figure_5G_Epithelial_Proportions.pdf", width = 6, height = 4, units = "in", path = "Figure_5/")
+```
+
+Epithelial cells are subsetted and markers called
+```{r}
+Epithelial.cells <- subset(Ortho.Tumors.MSA2.integrated, idents = c("11", "19", "23", "27"))
+```
+
+```{r}
+VlnPlot(Epithelial.cells, features = c("percent.mt", "nCount_RNA", "nFeature_RNA"))
+```
+
+```{r}
+Epithelial.Cluster.11.vs.19 <- FindMarkers(Epithelial.cells, ident.1 = "11", ident.2 = c("19"), assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25)
+Epithelial.Cluster.11.vs.23 <- FindMarkers(Epithelial.cells, ident.1 = "11", ident.2 = c("23"), assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25)
+Epithelial.Cluster.11 <- FindMarkers(Epithelial.cells, ident.1 = "11", ident.2 = c("19", "23"), assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Epithelial.Cluster.19 <- FindMarkers(Epithelial.cells, ident.1 = "19", ident.2 = c("11", "23"), assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Epithelial.Cluster.23 <- FindMarkers(Epithelial.cells, ident.1 = "23", ident.2 = c("19", "11"), assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+```
+
+# Figure 5H
+```{r}
+Fig_5H_plot <- VlnPlot(Epithelial.cells, features =  c("Hmga2", "Vim", "Fn1", "Tgfb1", "S100a4", "Zeb1", "Zeb2", "Cdh6"), assay = "RNA", pt.size = 0, stack = T, flip = T, fill.by = "ident", group.by = "Cell_Type_Level_3") + NoLegend()
+
+if (!dir.exists("Figure_5")) {dir.create("Figure_5")}
+ggsave(plot = Fig_5H_plot, "Figure_5H_EMT_Markers.pdf", width = 4, height = 5, units = "in", path = "Figure_5/")
+```
+
+# Figure 5I
+```{r}
+Fig_5I_plot <- VlnPlot(Epithelial.cells, features =  c("Lgals4", "Epcam", "Krt19", "Cdh1", "Muc1", "Prom1", "Dmbt1"), assay = "RNA", pt.size = 0, stack = T, flip = T, fill.by = "ident", group.by = "Cell_Type_Level_3") + NoLegend()
+
+if (!dir.exists("Figure_5")) {dir.create("Figure_5")}
+ggsave(plot = Fig_5I_plot, "Figure_5I_Differentiation_Markers.pdf", width = 4, height = 5, units = "in", path = "Figure_5/")
+```
+
+
+# Pathway enrichment analysis
+Pathway enrichment analysis is performed with SCPA 
+```{r}
+hall_mark_pathways <- msigdbr("Mus musculus", "H")
+reactome_pathways <- msigdbr(species = "mouse", category = "C2", subcategory = "CP:REACTOME")
+kegg_pathways <- msigdbr(species = "mouse", category = "C2", subcategory = "CP:KEGG")
+
+pathways <- rbind(hall_mark_pathways, reactome_pathways, kegg_pathways) %>%
+  format_pathways()
+```
+
+```{r}
+Ortho.Tumors.MSA2.integrated@meta.data <- Ortho.Tumors.MSA2.integrated@meta.data %>%
+  mutate(Epithelial.MSA2.vs.ctrl.GSEA = case_when(
+    Cell_Type_Level_1 == "Epithelial" & Treatment == "Ctrl" ~ "Epithelial_Ctrl",
+    Cell_Type_Level_1 == "Epithelial" & Treatment == "MSA-2" ~ "Epithelial_MSA2",
+    TRUE ~ "Other"
+    ))
+
+Ortho.Tumors.MSA2.integrated@meta.data <- Ortho.Tumors.MSA2.integrated@meta.data %>%
+  mutate(Immune.MSA2.vs.ctrl.GSEA = case_when(
+    Cell_Type_Level_1 == "Immune" & Treatment == "Ctrl" ~ "Immune_Ctrl",
+    Cell_Type_Level_1 == "Immune" & Treatment == "MSA-2" ~ "Immune_MSA2",
+    TRUE ~ "Other"
+    ))
+
+Ortho.Tumors.MSA2.integrated@meta.data <- Ortho.Tumors.MSA2.integrated@meta.data %>%
+  mutate(CAFs.MSA2.vs.ctrl.GSEA = case_when(
+    Cell_Type_Level_1 == "CAFs" & Treatment == "Ctrl" ~ "CAFs_Ctrl",
+    Cell_Type_Level_1 == "CAFs" & Treatment == "MSA-2" ~ "CAFs_MSA2",
+    TRUE ~ "Other"
+    ))
+```
+
+```{r}
+scpa_out_Epithelial.MSA2.vs.ctrl <- compare_seurat(Ortho.Tumors.MSA2.integrated,
+                           group1 = "Epithelial.MSA2.vs.ctrl.GSEA", 
+                           group1_population = c("Epithelial_Ctrl", "Epithelial_MSA2"),
+                           pathways = pathways)
+
+scpa_out_Immune.MSA2.vs.ctrl <- compare_seurat(Ortho.Tumors.MSA2.integrated,
+                           group1 = "Immune.MSA2.vs.ctrl.GSEA", 
+                           group1_population = c("Immune_Ctrl", "Immune_MSA2"),
+                           pathways = pathways)
+
+scpa_out_CAFs.MSA2.vs.ctrl <- compare_seurat(Ortho.Tumors.MSA2.integrated,
+                           group1 = "CAFs.MSA2.vs.ctrl.GSEA", 
+                           group1_population = c("CAFs_Ctrl", "CAFs_MSA2"),
+                           pathways = pathways)
+
+```
+
+```{r}
+scpa_out_Epithelial.MSA2.Enriched <- scpa_out_Epithelial.MSA2.vs.ctrl %>%
+  filter(FC < 0 & adjPval < 0.05) 
+
+scpa_out_Epithelial.Ctrl.Enriched <- scpa_out_Epithelial.MSA2.vs.ctrl %>%
+  filter(FC > 0 & adjPval < 0.05) 
+
+top_scpa_out_Epithelial.MSA2.Enriched <- scpa_out_Epithelial.MSA2.Enriched %>%
+  top_n(20, (qval - FC)) %>% 
+  mutate(Treatment = "MSA-2") %>% 
+  mutate(Cell_Type = "Epithelial")
+
+top_scpa_out_Epithelial.Ctrl.Enriched <- scpa_out_Epithelial.Ctrl.Enriched %>%
+  top_n(20, (qval + FC)) %>% 
+  mutate(Treatment = "Ctrl") %>% 
+  mutate(Cell_Type = "Epithelial")
+
+scpa_out_Immune.MSA2.Enriched <- scpa_out_Immune.MSA2.vs.ctrl %>%
+  filter(FC < 0 & adjPval < 0.05) 
+
+scpa_out_Immune.Ctrl.Enriched <- scpa_out_Immune.MSA2.vs.ctrl %>%
+  filter(FC > 0 & adjPval < 0.05) 
+
+top_scpa_out_Immune.MSA2.Enriched <- scpa_out_Immune.MSA2.Enriched %>%
+  top_n(20, (qval - FC)) %>% 
+  mutate(Treatment = "MSA-2") %>% 
+  mutate(Cell_Type = "Immune")
+
+top_scpa_out_Immune.Ctrl.Enriched <- scpa_out_Immune.Ctrl.Enriched %>%
+  top_n(20, (qval + FC)) %>% 
+  mutate(Treatment = "Ctrl") %>% 
+  mutate(Cell_Type = "Immune")
+
+scpa_out_CAF.MSA2.Enriched <- scpa_out_CAFs.MSA2.vs.ctrl %>%
+  filter(FC < 0 & adjPval < 0.05) 
+
+scpa_out_CAF.Ctrl.Enriched <- scpa_out_CAFs.MSA2.vs.ctrl %>%
+  filter(FC > 0 & adjPval < 0.05) 
+
+top_scpa_out_CAF.MSA2.Enriched <- scpa_out_CAF.MSA2.Enriched %>%
+  top_n(20, (qval - FC)) %>% 
+  mutate(Treatment = "MSA-2")%>% 
+  mutate(Cell_Type = "CAFs")
+
+top_scpa_out_CAF.Ctrl.Enriched <- scpa_out_CAF.Ctrl.Enriched %>%
+  top_n(20, (qval + FC)) %>% 
+  mutate(Treatment = "Ctrl")%>% 
+  mutate(Cell_Type = "CAFs")
+```
+
+```{r}
+Selected.Epithelial.Pathways <- c("HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION", "HALLMARK_G2M_CHECKPOINT", "HALLMARK_E2F_TARGETS", "REACTOME_EXTRACELLULAR_MATRIX_ORGANIZATION", "KEGG_FOCAL_ADHESION", "REACTOME_INTERFERON_SIGNALING", "REACTOME_INTERFERON_ALPHA_BETA_SIGNALING", "HALLMARK_INFLAMMATORY_RESPONSE", "REACTOME_CLASS_I_MHC_MEDIATED_ANTIGEN_PROCESSING_PRESENTATION", "HALLMARK_OXIDATIVE_PHOSPHORYLATION")
+
+Selected.CAF.Pathways <- c("REACTOME_INTEGRIN_CELL_SURFACE_INTERACTIONS", "REACTOME_COLLAGEN_FORMATION", "REACTOME_COLLAGEN_BIOSYNTHESIS_AND_MODIFYING_ENZYMES", "REACTOME_COLLAGEN_CHAIN_TRIMERIZATION", "REACTOME_ASSEMBLY_OF_COLLAGEN_FIBRILS_AND_OTHER_MULTIMERIC_STRUCTURES", "REACTOME_INTERFERON_SIGNALING", "HALLMARK_INTERFERON_ALPHA_RESPONSE", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "HALLMARK_COMPLEMENT", "REACTOME_SIGNALING_BY_INTERLEUKINS")
+
+Selected.Immune.Pathways <- c("REACTOME_TRANSLATION", "REACTOME_EUKARYOTIC_TRANSLATION_INITIATION", "REACTOME_RRNA_PROCESSING", "KEGG_OXIDATIVE_PHOSPHORYLATION", "REACTOME_SIGNALING_BY_ROBO_RECEPTORS", "REACTOME_INTERFERON_SIGNALING", "REACTOME_INTERFERON_ALPHA_BETA_SIGNALING", "REACTOME_NEUTROPHIL_DEGRANULATION", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "REACTOME_ANTIGEN_PROCESSING_CROSS_PRESENTATION")
+
+Selected.Pathways <- unique(c(Selected.Epithelial.Pathways, Selected.CAF.Pathways, Selected.Immune.Pathways))
+```
+
+```{r}
+Selected.Epithelial.Pathways.DF <- scpa_out_Epithelial.MSA2.vs.ctrl %>%
+  filter(Pathway %in% Selected.Pathways) %>%
+  mutate(Cell_Type = "Epithelial")
+
+Selected.CAF.Pathways.DF<- scpa_out_CAFs.MSA2.vs.ctrl %>%
+  filter(Pathway %in% Selected.Pathways) %>%
+  mutate(Cell_Type = "CAF")
+
+Selected.Immune.Pathways.DF<- scpa_out_Immune.MSA2.vs.ctrl %>%
+  filter(Pathway %in% Selected.Pathways) %>%
+  mutate(Cell_Type = "Immune")
+```
+
+```{r}
+GSEA.DF.MSA2.vs.Ctrl <- rbind(Selected.Immune.Pathways.DF, Selected.CAF.Pathways.DF, Selected.Epithelial.Pathways.DF) %>%
+mutate(Treatment = case_when(FC > 0 ~ "Ctrl",
+                             FC < 0 ~ "MSA-2"))
+GSEA.DF.MSA2.vs.Ctrl <- GSEA.DF.MSA2.vs.Ctrl %>%
+  #mutate(Pathway = paste(Pathway, Cell_Type, sep = "_")) %>%
+  #mutate(Treatment = paste(Treatment, Cell_Type, sep = "_")) %>%
+  arrange(Cell_Type, desc(FC)) %>%
+  mutate(Pathway = gsub("_", " ", Pathway))
+
+# Manually specify the order of levels for Pathway
+pathway_order <- unique(GSEA.DF.MSA2.vs.Ctrl$Pathway)
+pathway_order <- pathway_order[order(match(pathway_order, unique(GSEA.DF.MSA2.vs.Ctrl$Pathway)))]
+```
+
+# Figure 5J
+```{r}
+library(stringr)
+Fig_5J_plot <- ggplot(GSEA.DF.MSA2.vs.Ctrl, aes(x = Treatment, y = factor(Pathway, levels = pathway_order), group = Pathway)) +
+  geom_point(aes(color = qval, size = abs(FC))) +
+  theme_bw(base_size = 6) +
+  scale_colour_gradient(limits = c(0, 10), low = "grey", high = "red") +
+  ylab(NULL) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, size = 12),
+        title = element_text(size = 10),
+        axis.text.y = element_text(size = 8),
+        legend.text = element_text(size = 10)) +
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 100)) +
+  facet_grid(. ~ Cell_Type, scales = "free_y", space = "free_y", switch = "y")
+
+if (!dir.exists("Figure_5")) {dir.create("Figure_5")}
+ggsave(plot = Fig_5J_plot, "Figure_5J_GSEA.pdf", width = 10, height = 6, units = "in", path = "Figure_5/")
+```
+
+
+# Figure S9
+Plot Markers of cell types
+```{r}
+Neutrophil_markers <- c("S100a8", "S100a9", "G0s2")
+Macrophage_markers <- c("Apoe", "C1qc", "Aif1")
+Epithelial_markers <- c("Epcam", "Cdh1", "Krt19")
+CAF_markers <- c("Dcn", "Lum", "Col1a1")
+T_cell_markers <- c("Cd3d", "Cd3g", "Cd3e")
+Dendritic_cell_markers <- c("Ccr7", "Ccl17", "Cst3")
+B_cells <- c("Ms4a1", "Cd79a", "Cd79b")
+Endothelial_cells <- c("Pecam1", "Cd34", "Cdh5")
+CAP_markers <- c("Rgs5", "Mcam", "Notch3")
+Proliferation_markers <- c("Mki67", "Top2a", "Ube2c")
+
+cell_type_markers <- c(Neutrophil_markers, Macrophage_markers, Epithelial_markers, CAF_markers, Dendritic_cell_markers, T_cell_markers, B_cells, Endothelial_cells, CAP_markers, Proliferation_markers)
+```
+
+```{r}
+Ortho.Tumors.MSA2.integrated@active.ident <- factor(x = Ortho.Tumors.MSA2.integrated@active.ident, levels = c("0", "2", "4", "6", "10", "17", "18", "1", "3", "7", "13", "11", "19", "23", "5", "8", "9", "12", "15", "26", "20", "21", "14", "22", "24", "25", "16", "27"))
+```
+
+# Figure S9A
+```{r}
+Fig_S9A_plot <- DotPlot(Ortho.Tumors.MSA2.integrated, assay = "RNA", features = cell_type_markers, cols = c("white", "blue")) + theme(axis.text.x = element_text(angle = 45, hjust=1)) 
+
+if (!dir.exists("Figure_S9")) {dir.create("Figure_S9")}
+ggsave(plot = Fig_S9A_plot, "Figure_S9A_Cell_type_markers.pdf", width = 15, height = 7.5, units = "in", path = "Figure_S9/")
+```
+
+Gene signatures of CAF subtypes from in vitro co-culture model and human PDAC and plto Z-Scores are added. The generation of the markers lists is described in R markdowns `Figure_3_S6_data_analysis.Rmd` and `Figure_2_S4_S5_data_analysis.Rmd`. The lists can also be found in supplementary data tables S6 and S5 of the paper, respectively
+```{r}
+# from PSC.singlets.rPCA.integrated.Cluster.0.Markers.txt
+Cocul.iCAF.markers <- c("Saa3", "Mt2", "Sod2", "Hp", "Mt1", "Cxcl1", "Ptgs2", "Ackr3", "Slc16a1", "Gda", "Ifitm3", "Nfkbiz", "Cxcl5", "Dcn", "Cebpd", "Hif1a", "Sdc4", "Ereg", "Ifitm1", "Phlda1", "Ier3", "C1ra", "Nfkbia", "Cfb", "Gas1", "Cebpb", "Cp", "Dhrs3", "Fgf7", "Serpina3n", "Fth1", "Pi15", "Osmr", "Junb", "Serpina3g", "Fam162a", "C3", "Steap4", "Jak2", "Il4ra", "Nek6", "Nsg1", "Cd74", "Rarres2", "Il13ra1", "Sod3", "Pdpn", "Lcn2", "Dynlrb1", "Mgst1", "Slc9a3r1", "Zfp36l1", "Lgi2", "Slc39a14", "Gm2115", "Zfp281", "Mark1", "Ifi207", "Fos", "Mmp13", "Ch25h", "Ifi27l2a", "Mmp19", "Mmp3", "Fosb", "Cyp1b1", "Serping1", "Nr4a1", "Igfbp3")
+
+# from PSC.singlets.rPCA.integrated.Cluster.1.Markers.txt
+Cocul.myCAF.markers <- c("Col5a3", "Adcy1", "Pmepa1", "Jag1", "Col1a1", "AA467197", "Itgb1", "Msn", "Klhdc8a", "Npr3", "Cdh11", "Fbn1", "Hbegf", "Slc20a1", "Tln2", "Inhba", "Tfpi2", "Tmsb4x", "Ttll5", "Cnn3", "Runx1", "Sparc", "Myl12a", "Acsbg1", "Acta2", "Csrp2", "Pdgfc", "Ccn4", "Gng11", "Bok", "Ncam1", "Timp3", "Has2", "Tes", "Col8a1", "Plau", "Megf10", "Tmeff1", "Sdc2", "Prkg2", "Serpinh1", "Tgfb3", "Pmaip1", "Ctsc", "Bhlhe41", "Tubb2b", "Creb3l1", "Zfp469", "Vim", "Nrep", "Vegfc", "Tagln", "Atp6v1g1", "Flna", "Postn", "Unc5b", "Col5a1", "Gm6169", "Cav1", "Stk17b", "Rnf149", "Tmsb10", "Plat", "Tars", "Col18a1", "Prss23", "Actg1", "Bhlhe40", "Col5a2", "Palld", "Creb3l2", "Frrs1", "Col6a3", "Crlf1", "Kdelr3", "Wnt5a", "Nrp1", "Uchl1", "Pdgfa", "Anxa2", "Prdx6", "Lrrc59", "Myh9", "Tuba1a", "Epha3", "Tubb3", "Plaur", "Pxdn", "Ccn2", "Crip1", "Ppic", "Bmp1", "Timp1", "Ndfip1", "Basp1", "Cyp51", "Ank", "Fgf2", "Tubb2a", "Cryab", "Vegfa", "Col1a2"
+)
+```
+
+```{r}
+# from FAP.CAFs.6S.ENG.iCAF.markers.txt
+FAP.CAF.ENG.iCAF.Markers <- c("NFIA", "LMO4", "TXNIP", "CFH", "HSD11B1", "AGT", "COLEC11", "LTBP1", "CD302", "SCN7A", "FRZB", "TFPI", "PID1", "EPHA3", "BOC", "ZBTB20", "RBP1", "RARRES1", "APOD", "SOD3", "IGFBP7", "SYNPO2", "SPRY1", "HAND2", "HAND2-AS1", "C7", "SELENOP", "F2R", "NR2F1", "MOXD1", "SFRP4", "HGF", "GNG11", "CPED1", "MTUS1", "CEBPD", "RUNX1T1", "ALDH1A1", "TLE4", "ASPN", "PTCH1", "COL15A1", "GSN", "ENG", "DEPP1", "ADIRF", "IFITM1", "DKK3", "SERPING1", "CTSC", "FXYD6", "C1S", "A2M", "BTG1", "TSC22D1", "ITM2B", "PCDH9", "RNASE4", "NR2F2", "LITAF", "MFAP4", "MTRNR2L1", "ABCA6", "CYGB", "FXYD1", "LTBP4", "CST3", "TGM2", "TSHZ2", "MIR99AHG", "TIMP1", "XIST", "FLRT2", "DDIT3", "HSPA1B", "DNAJB1", "HSPA1A", "LEPR", "FOS", "IER2", "EGR1", "ADH1B", "FOSB", "JUN", "DPT")
+
+# from 
+FAP.CAF.ENG.myCAF.Markers <- c("IGFBP5", "RBP1", "HOPX", "IGFBP7", "EDNRA", "ITGA1", "ENC1", "F2R", "COL10A1", "ANO1", "NTM", "POSTN", "COL4A1", "COL4A2", "STRA6", "NR2F2", "MMP28", "PPP1R14A", "LAMP5", "CST1", "CST2", "TSHZ2", "TIMP1", "APOD", "CCDC102B", "SPON2", "SULF1", "ISLR", "DPEP1", "IGFBP3", "XIST", "SLC6A6", "COL18A1", "MEST", "CDKN2B", "MATN3", "HES1", "THBS4", "PCSK1N", "CXCL14", "ITGBL1")
+
+# from FAP.CAFs.6S.ENG.myCAF.markers.txt
+FAP.CAF.LRRC15.myCAF.Markers <- c("ISG15", "MFAP2", "CAPZB", "NBL1", "ID3", "COL8A2", "COL11A1", "CTSK", "CSRP1", "CD55", "MATN3", "SDC1", "ANTXR1", "TMSB10", "FAP", "COL5A2", "FN1", "ITM2C", "ARL4C", "VGLL4", "TMEM158", "COL8A1", "ITGB5", "TM4SF1", "TRIM59", "LRRC15", "PDGFC", "CPE", "PALLD", "PDLIM3", "NPR3", "C1QTNF3", "RAI14", "VCAN", "EDIL3", "TGFBI", "SPARC", "F13A1", "PTK7", "RUNX2", "COL12A1", "MARCKS", "COL10A1", "ENPP1", "PERP", "FNDC1", "THBS2", "ACTB", "TWIST1", "SUGCT", "INHBA", "AEBP1", "IGFBP3", "FZD1", "COL1A2", "LRRC17", "CALU", "CALD1", "RARRES2", "CTSB", "LOXL2", "SULF1", "FABP5", "CTHRC1", "FBXO32", "TPM2", "GOLM1", "COL5A1", "NET1", "PLAU", "ACTA2", "ADRA2A", "PLPP4", "HTRA1", "MDK", "SERPINH1", "PRSS23", "MMP7", "CADM1", "TAGLN", "NTM", "CD9", "MFAP5", "PPFIBP1", "MYL6", "EPYC", "NUAK1", "GJB2", "POSTN", "MMP14", "DIO2", "IFI27", "GREM1", "TPM1", "ITGA11", "PKM", "LOXL1", "HCFC1R1", "IL32", "TGFB1I1", "CDH11", "CMTM3", "MAF", "C17orf49", "COL1A1", "P4HB", "MYL12A", "GALNT1", "GRP", "CNN2", "TPM4", "IGFL2", "RIN2", "ID1", "MYL9", "CTSZ", "MMP11", "TIMP3", "MYH9", "LGALS1", "CD99", "MXRA5", "RPS4Y1", "MYLK", "IFI6", "HSPA5")
+
+# from FAP.CAFs.6S.WT1.iCAF.markers.txt
+FAP.CAF.WT1.iCAF.Markers <- c("MMP23B", "ERRFI1", "SRM", "PLA2G2A", "ZNF593", "SH3BGRL3", "PODN", "NEXN", "CCN1", "F3", "S100A10", "S100A16", "LMNA", "CRABP2", "UAP1", "ABL2", "CHI3L1", "CD34", "OSR1", "CYP1B1", "EFEMP1", "UGP2", "CYTOR", "IL1R1", "SLC20A1", "COL3A1", "MYO1B", "EEF1B2", "SCG2", "SERPINE2", "NCL", "LRRFIP1", "TWIST2", "ANKRD28", "GNL3", "ABI3BP", "CCDC80", "FSTL1", "PTX3", "MLF1", "RPL22L1", "ATP13A3", "UGDH", "ANK2", "SFRP2", "SCRG1", "IL6ST", "MAP1B", "LHFPL2", "LOX", "PDLIM4", "GPX3", "SLIT3", "DUSP1", "NOP16", "GFPT2", "TUBB2A", "PXDC1", "CLIC1", "TNXB", "RPS18", "HMGA1", "PI16", "TENT5A", "SGK1", "SOD2", "SMOC2", "ELN", "STEAP1", "PCOLCE", "SERPINE1", "NAMPT", "CCDC71L", "CAV1", "FLNC", "PDGFRL", "CLU", "SFRP1", "PENK", "COL14A1", "HAS2", "MYC", "ARC", "AL583785.1", "NFIB", "PLIN2", "ANXA1", "NTRK2", "OGN", "TXN", "PAPPA", "ARPC5L", "PTGDS", "TUBB4B", "PFKP", "KLF6", "CELF2", "VIM", "CXCL12", "DDX21", "PLAC9", "RGS10", "LSP1", "H19", "IGF2", "SPON1", "LDHA", "WT1", "CD44", "FOSL1", "CD248", "CLCF1", "MRGPRF", "PDGFD", "NNMT", "OAF", "MFAP5", "YBX3", "GPRC5A", "EMP1", "MGP", "MGST1", "TUBA1C", "LIMA1", "IGFBP6", "ITGA5", "CD63", "SRGAP1", "CCT2", "HELLPAR", "IGF1", "RAN", "MEDAG", "RGCC", "TPT1", "NFKBIA", "FRMD6", "GNPNAT1", "FERMT2", "HIF1A", "SERPINA3", "BDKRB1", "CRIP1", "THBS1", "EIF3J", "FBN1", "FGF7", "ANXA2", "CILP", "CTSH", "RPS17", "ALDH1A3", "TNFRSF12A", "VASN", "C16orf89", "GSPT1", "MT2A", "MT1E", "MT1M", "MT1A", "MT1X", "TPPP3", "COTL1", "ZNF469", "CYBA", "TUBB3", "SERPINF1", "EIF4A1", "MAP2K3", "CCL2", "IGFBP4", "NGFR", "LRRC59", "NME1", "SPHK1", "SOCS3", "METRNL", "COLEC12", "TUBB6", "SNRPD1", "NFATC1", "CFD", "C3", "ANGPTL4", "JUND", "HSPB6", "ZFP36", "PLAUR", "APOE", "VASP", "EMP3", "HAS1", "MYADM", "NOP56", "CPXM1", "PROCR", "SAMHD1", "SULF2", "PTGIS", "NFATC2", "DOK5", "RCAN1", "COL6A1", "FBLN1", "SRPX", "ITM2A", "ACSL4", "CHRDL1", "GPC3")
+
+# from FAP.CAFs.6S.ifCAF.markers.txt
+FAP.CAF.ifCAF.Markers <- c("CXCL10", "OASL", "CXCL11", "OAS3", "CMPK2", "IFIH1", "OAS2", "IFIT3", "IFIT1", "OAS1", "RSAD2", "IFI44L", "IFIT2", "HERC6", "MX1", "GBP4", "DDX58", "XAF1", "PARP14", "STAT1", "ISG15", "HERC5", "MX2", "USP18", "IRF7", "IFI6", "EPSTI1", "GMPR", "PSMB9", "LAP3", "IFI35", "IFI44", "RTP4", "TNFSF10", "DDX60L", "IFITM1", "TAP1", "PLSCR1", "UBE2L6", "TYMP", "TNFSF13B", "LY6E", "BST2", "RNF213", "C5orf56", "EIF2AK2", "TMEM140", "SAMD9", "SAMD9L", "SP100", "NMI", "PSMB8", "DDX60", "PSME2", "SP110", "PARP9", "GBP1", "LGALS9", "APOL6", "IRF9", "ISG20", "TRIM22", "CX3CL1", "SHFL", "SLFN5", "IFI30", "PARP10", "STAT2", "HLA-A", "CTSS", "B2M", "HLA-B", "IFITM3", "HLA-E", "APOL2", "HLA-C", "TAP2", "WARS", "PML", "IFIT5", "HLA-F", "VCAM1", "PPM1K", "HAPLN3", "PLAAT4", "IFI16", "CNP", "GBP2", "APOL1", "ADAR", "CHMP5", "BIRC3", "GBP3", "BHLHE41", "IL32", "PSME1", "PSMB10", "TAPBP", "VAMP5", "ZC3HAV1", "IL15RA", "PNPT1", "PHF11", "RBCK1", "RAB31", "OPTN", "RNF114", "SAMHD1", "CCL11", "CTSB", "IFI27", "POSTN", "SPATS2L", "MAFB", "CD68", "SOCS1", "LGALS1", "LGALS3BP", "SOD2", "IRF1", "MDK", "NRIP1", "ICAM1", "GOLM1", "CD40", "MMP11", "FBXO32", "SULF1", "TNFAIP2", "GREM1", "CTHRC1")
+```
+
+```{r}
+FAP.CAF.ENG.iCAF.HomSa.2.MusMu.Sig <- Orthology.table.genes %>% 
+  filter(Orthology.table.genes$Homsa_gene_name %in% FAP.CAF.ENG.iCAF.Markers)
+FAP.CAF.ENG.iCAF.HomSa.2.MusMu.Sig <- FAP.CAF.ENG.iCAF.HomSa.2.MusMu.Sig[,4]
+FAP.CAF.ENG.iCAF.HomSa.2.MusMu.Sig <- as.character(unlist(FAP.CAF.ENG.iCAF.HomSa.2.MusMu.Sig))
+
+FAP.CAF.ENG.myCAF.HomSa.2.MusMu.Sig <- Orthology.table.genes %>% 
+  filter(Orthology.table.genes$Homsa_gene_name %in% FAP.CAF.ENG.myCAF.Markers)
+FAP.CAF.ENG.myCAF.HomSa.2.MusMu.Sig <- FAP.CAF.ENG.myCAF.HomSa.2.MusMu.Sig[,4]
+FAP.CAF.ENG.myCAF.HomSa.2.MusMu.Sig <- as.character(unlist(FAP.CAF.ENG.myCAF.HomSa.2.MusMu.Sig))
+
+FAP.CAF.LRRC15.myCAF.HomSa.2.MusMu.Sig <- Orthology.table.genes %>% 
+  filter(Orthology.table.genes$Homsa_gene_name %in% FAP.CAF.LRRC15.myCAF.Markers)
+FAP.CAF.LRRC15.myCAF.HomSa.2.MusMu.Sig <- FAP.CAF.LRRC15.myCAF.HomSa.2.MusMu.Sig[,4]
+FAP.CAF.LRRC15.myCAF.HomSa.2.MusMu.Sig <- as.character(unlist(FAP.CAF.LRRC15.myCAF.HomSa.2.MusMu.Sig))
+
+FAP.CAF.WT1.iCAF.Markers.HomSa.2.MusMu.Sig <- Orthology.table.genes %>% 
+  filter(Orthology.table.genes$Homsa_gene_name %in% FAP.CAF.WT1.iCAF.Markers)
+FAP.CAF.WT1.iCAF.Markers.HomSa.2.MusMu.Sig <- FAP.CAF.WT1.iCAF.Markers.HomSa.2.MusMu.Sig[,4]
+FAP.CAF.WT1.iCAF.Markers.HomSa.2.MusMu.Sig <- as.character(unlist(FAP.CAF.WT1.iCAF.Markers.HomSa.2.MusMu.Sig))
+
+FAP.CAF.ifCAF.Markers.HomSa.2.MusMu.Sig <- Orthology.table.genes %>% 
+  filter(Orthology.table.genes$Homsa_gene_name %in% FAP.CAF.ifCAF.Markers)
+FAP.CAF.ifCAF.Markers.HomSa.2.MusMu.Sig <- FAP.CAF.ifCAF.Markers.HomSa.2.MusMu.Sig[,4]
+FAP.CAF.ifCAF.Markers.HomSa.2.MusMu.Sig <- as.character(unlist(FAP.CAF.ifCAF.Markers.HomSa.2.MusMu.Sig))
+```
+
+```{r}
+CAFs <- Add_Z(CAFs, in_sig = Cocul.iCAF.markers, Z_name = "Co-culture iCAF Z-Score")
+CAFs <- Add_Z(CAFs, in_sig = Cocul.myCAF.markers, Z_name = "Co-culture myCAF Z-Score")
+```
+
+# Figure S9B
+```{r}
+Fig_S9B_plot <- VlnPlot(CAFs, features =  c("Co-culture iCAF Z-Score", "Co-culture myCAF Z-Score", "Co-culture ifCAF Z-Score"), pt.size = 0, stack = T, flip = T, fill.by = "ident", group.by = "Cell_Type_Level_3") + NoLegend()
+
+if (!dir.exists("Figure_S9")) {dir.create("Figure_S9")}
+ggsave(plot = Fig_S9B_plot, "Figure_S9B_Cocul_CAF_Z_Scores.pdf", width = 5, height = 7.5, units = "in", path = "Figure_S9/")
+```
+
+```{r}
+CAFs <- Add_Z(CAFs, in_sig = FAP.CAF.ENG.iCAF.HomSa.2.MusMu.Sig, Z_name = "Human PDAC ENG+ iCAF Z-Score")
+CAFs <- Add_Z(CAFs, in_sig = FAP.CAF.ENG.myCAF.HomSa.2.MusMu.Sig, Z_name = "Human PDAC ENG+ myCAF Z-Score")
+CAFs <- Add_Z(CAFs, in_sig = FAP.CAF.LRRC15.myCAF.HomSa.2.MusMu.Sig, Z_name = "Human PDAC LRRC15+ myCAF Z-Score")
+CAFs <- Add_Z(CAFs, in_sig = FAP.CAF.WT1.iCAF.Markers.HomSa.2.MusMu.Sig, Z_name = "Human PDAC WT1+ iCAF Z-Score")
+CAFs <- Add_Z(CAFs, in_sig = FAP.CAF.ifCAF.Markers.HomSa.2.MusMu.Sig, Z_name = "Human PDAC ifCAF Z-Score")
+```
+
+# Figure S9C
+```{r}
+Fig_S9C_plot <- VlnPlot(CAFs, features =  c("Human PDAC ENG+ myCAF Z-Score", "Human PDAC LRRC15+ myCAF Z-Score", "Human PDAC ENG+ iCAF Z-Score", "Human PDAC WT1+ iCAF Z-Score", "Human PDAC ifCAF Z-Score", "Human PDAC ifCAF Z-Score"), pt.size = 0, stack = T, flip = T, fill.by = "ident", group.by = "Cell_Type_Level_3") + NoLegend()
+
+if (!dir.exists("Figure_S9")) {dir.create("Figure_S9")}
+ggsave(plot = Fig_S9C_plot, "Figure_S9C_FAP_CAF_Z_Scores.pdf", width = 7.5, height = 7.5, units = "in", path = "Figure_S9/")
+```
+
+# Figure S9D - UMAP split by treatment
+```{r}
+Fig_S9D_plot <- DimPlot(Ortho.Tumors.MSA2.integrated, reduction = "umap", group.by = "Treatment", cells = sample(colnames(Ortho.Tumors.MSA2.integrated)), pt.size = 0.1) + ggtitle("")
+
+if (!dir.exists("Figure_S9")) {dir.create("Figure_S9")}
+ggsave(plot = Fig_S9D_plot, "Figure_S9D_Split_UMAP.pdf", width = 5, height = 5, units = "in", path = "Figure_S9/")
+```
+
+# Add Type I IFN signalling score and plot in neutrophil subtypes
+```{r}
+Hallmark.Interferon.alpha <- hall_mark_pathways %>%
+  filter(gs_name %in% "HALLMARK_INTERFERON_ALPHA_RESPONSE") %>%
+  pull(gene_symbol)
+```
+
+
+```{r}
+Neutrophils <- Add_Z(Neutrophils, Hallmark.Interferon.alpha, "HALLMARK - Interferon Alpha Response")
+
+# make sure variable is not yet part of metadata
+Neutrophils@meta.data <- Neutrophils@meta.data %>%
+  mutate(Neutrophil.Subtype = case_when(Cell_Type_Level_3 == "Il1r2+ Neutrophils" ~ "TAN 1",
+                               Cell_Type_Level_3 == "Retnlg+ Neutrophils" ~ "Other",
+                               Cell_Type_Level_3 == "Rsad2+ Neutrophils" ~ "TAN 2",
+                               Cell_Type_Level_3 == "Ccl3+ Neutrophils" ~ "TAN 3",
+                               Cell_Type_Level_3 == "Ccl4+ Neutrophils" ~ "TAN 3",
+                               Cell_Type_Level_3 == "Csf3r+ Neutrophils" ~ "Other",
+                               Cell_Type_Level_3 == "Ngp+ Neutrophils" ~ "Other"))
+```
+
+# Figure S9E
+```{r}
+Fig_S9E_plot <- VlnPlot(Neutrophils, "HALLMARK - Interferon Alpha Response", pt.size = 0, group.by = "Neutrophil.Subtype", split.by = "Treatment")
+
+if (!dir.exists("Figure_S9")) {dir.create("Figure_S9")}
+ggsave(plot = Fig_S9E_plot, "Figure_S9E_Interferon_Signalling_Z_Scores_Neutrophils.pdf", width = 4, height = 5, units = "in", path = "Figure_S9/")
+```
+
+# Subset T cells and plot activation signatures
+```{r}
+T.cells <- subset(Ortho.Tumors.MSA2.integrated, idents = "14")
+```
+
+```{r}
+# CD8_activation score genes
+CD8.Activation.Sig <- c("CD69", "CCR7", "CD27", "BTLA", "CD40LG", "IL2RA", "CD3E", "CD47", "EOMES", "GNLY", "GZMA", "GZMB", "PRF1", "IFNG", "CD8A", "CD8B", "CD95L", "LAMP1", "LAG3", "CTLA4", "HLA-DRA", "TNFRSF4", "ICOS", "TNFRSF9", "TNFRSF18") 
+
+# cytolytic effect genes
+Cytolytic.Effect.Sig <- c("EOMES", "TBX21", "GZMB", "PRF1", "FASL", "GZMH", "GZMA")
+
+CD8.Activation.HomSa.2.MusMu.Sig <- Orthology.table.genes %>% 
+  filter(Orthology.table.genes$Homsa_gene_name %in% CD8.Activation.Sig)
+CD8.Activation.HomSa.2.MusMu.Sig <- CD8.Activation.HomSa.2.MusMu.Sig[,4]
+CD8.Activation.HomSa.2.MusMu.Sig <- as.character(unlist(CD8.Activation.HomSa.2.MusMu.Sig))
+
+Cytolytic.Effect.HomSa.2.MusMu.Sig <- Orthology.table.genes %>% 
+  filter(Orthology.table.genes$Homsa_gene_name %in% Cytolytic.Effect.Sig)
+Cytolytic.Effect.HomSa.2.MusMu.Sig <- Cytolytic.Effect.HomSa.2.MusMu.Sig[,4]
+Cytolytic.Effect.HomSa.2.MusMu.Sig <- as.character(unlist(Cytolytic.Effect.HomSa.2.MusMu.Sig))
+
+T.cells <- Add_Z(T.cells, in_sig = CD8.Activation.HomSa.2.MusMu.Sig, Z_name = "CD8 Activation")
+T.cells <- Add_Z(T.cells, in_sig = Cytolytic.Effect.HomSa.2.MusMu.Sig, Z_name = "Cytolytic Effect")
+
+T_cells_CD8_Activation <- T.cells@meta.data %>%
+  select(c("Treatment", "CD8 Activation")) %>%
+  rename("CD8.Activation" = "CD8 Activation")
+
+test_results_T_cells_CD8_Activation <- T.cells@meta.data %>%
+  select(c("Treatment", "CD8 Activation")) %>%
+  rename("CD8.Activation" = "CD8 Activation") %>%
+  summarise(p_value = wilcox.test(CD8.Activation ~ Treatment)$p.value)
+
+T_cells_Cytolytic_Effect <- T.cells@meta.data %>%
+  select(c("Treatment", "Cytolytic Effect")) %>%
+  rename("Cytolytic.Effect" = "Cytolytic Effect")
+
+test_results_T_cells_Cytolytic_Effect <- T.cells@meta.data %>%
+  select(c("Treatment", "Cytolytic Effect")) %>%
+  rename("Cytolytic.Effect" = "Cytolytic Effect") %>%
+  summarise(p_value = wilcox.test(Cytolytic.Effect ~ Treatment)$p.value)
+
+test_results_T_cells_CD8_Activation <- test_results_T_cells_CD8_Activation %>%
+  mutate(significance = case_when(
+    p_value > 0.05 ~ "ns",
+    p_value <= 0.0001 ~ "****",
+    p_value <= 0.001 ~ "***",
+    p_value <= 0.01 ~ "**",
+    p_value <= 0.05 ~ "*",
+    TRUE ~ ""
+  )) %>%
+  mutate(Treatment = "Ctrl")
+
+test_results_T_cells_Cytolytic_Effect <- test_results_T_cells_Cytolytic_Effect %>%
+  mutate(significance = case_when(
+    p_value > 0.05 ~ "ns",
+    p_value <= 0.0001 ~ "****",
+    p_value <= 0.001 ~ "***",
+    p_value <= 0.01 ~ "**",
+    p_value <= 0.05 ~ "*",
+    TRUE ~ ""
+  )) %>%
+  mutate(Treatment = "Ctrl")
+```
+
+# Figure S9F
+```{r}
+T_cells_CD8_Activation <- T_cells_CD8_Activation %>%
+  mutate(Metric = "CD8 Activation", Value = CD8.Activation)
+
+T_cells_Cytolytic_Effect <- T_cells_Cytolytic_Effect %>%
+  mutate(Metric = "Cytolytic Effect", Value = Cytolytic.Effect)
+
+combined_data <- bind_rows(T_cells_CD8_Activation, T_cells_Cytolytic_Effect)
+
+# Combine the test results
+test_results_T_cells_CD8_Activation <- test_results_T_cells_CD8_Activation %>%
+  mutate(Metric = "CD8 Activation")
+
+test_results_T_cells_Cytolytic_Effect <- test_results_T_cells_Cytolytic_Effect %>%
+  mutate(Metric = "Cytolytic Effect")
+
+combined_test_results <- bind_rows(test_results_T_cells_CD8_Activation, test_results_T_cells_Cytolytic_Effect)
+
+# Calculate max_y for the combined data
+max_y <- combined_data %>%
+  group_by(Metric) %>%
+  summarise(max_value = max(Value, na.rm = TRUE) * 1.1)
+
+combined_test_results <- combined_test_results %>%
+  left_join(max_y, by = "Metric")
+
+# Create the combined plot
+Fig_S9F_plot <- ggplot(combined_data, aes(x = Treatment, y = Value, fill = Treatment)) +
+  geom_boxplot(position = position_dodge(width = 0.8)) +
+  labs(x = "Cluster", y = "Z-Score", color = "Treatment", title = "T cells") +
+  scale_fill_manual(values = c("#F8766D", "#00BFC4")) +  # Specify colors for treatments
+  theme_bw() + 
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  facet_wrap(~ Metric, scales = "free_y") +
+  geom_text(data = combined_test_results, aes(x = Treatment, y = max_value, label = significance), position = position_dodge(width = 0.9), inherit.aes = FALSE, color = "black")
+
+if (!dir.exists("Figure_S9")) {dir.create("Figure_S9")}
+ggsave(plot = Fig_S9F_plot, "Figure_S9F_Tcell_Z_Scores.pdf", width = 5, height = 5, units = "in", path = "Figure_S9/")
+```
+
+

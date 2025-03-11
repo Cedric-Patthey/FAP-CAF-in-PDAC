@@ -1,0 +1,13 @@
+Sample	Mouse	Mouse_nr	Line	Sex	Treat	sort_date	Emulsion	cDNA_nr	10x_replicate	Libr_date	libr_nr	dual_idex
+s1	m14	4936	mT3	Male	Veh	01-Feb	OK	c1	R1	06-Mar-24	L1	SI-TT-G1
+s2	m11	4916	mT3	Female	MSA2	01-Feb	OK	c2	R1	06-Mar-24	L2	SI-TT-G2
+s3	m14	4936	mT3	Male	Veh	01-Feb	Large_bubbles	c3	R2	06-Mar-24	L3	SI-TT-G3
+s4	m11	4916	mT3	Female	MSA2	01-Feb	OK	c4	R2	06-Mar-24	L4	SI-TT-G4
+s5	m10	4661	mT5	Female	Veh	05-Feb	OK	c1	R1	06-Mar-24	L5	SI-TT-G5
+s6	m22_T2	5348	mT5	Male	MSA2	05-Feb	Large_bubbles	c2	R1	06-Mar-24	L6	SI-TT-G6
+s7	m10	4661	mT5	Female	Veh	05-Feb	OK	c3	R2	06-Mar-24	L7	SI-TT-G7
+s8	m22_T2	5348	mT5	Male	MSA2	05-Feb	OK	c4	R2	06-Mar-24	L8	SI-TT-G8
+s9	m27	5401	mT5	Male	Veh	29-Feb	OK	c1	R1	06-Mar-24	L9	SI-TT-G9
+s10	m15	4934	mT5	NA	MSA2	29-Feb	OK	c2	R1	06-Mar-24	L10	SI-TT-G10
+s11	m27	5401	mT5	Male	Veh	29-Feb	OK	c3	R2	06-Mar-24	L11	SI-TT-G11
+s12	m15	4934	mT5	NA	MSA2	29-Feb	OK	c4	R2	06-Mar-24	L12	SI-TT-G12
