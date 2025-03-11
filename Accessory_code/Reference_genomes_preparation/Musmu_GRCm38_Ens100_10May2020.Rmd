@@ -1,0 +1,518 @@
+---
+title: "Musmu_GRCm38_Ens100"
+author: "Cedric"
+date: "11/05/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Synopsis
+The GRCm38 genome with the Ensemble release 100 annotations as of 10 may 2020 is processed to generate the folowing files
+- Genome assembly fasta file with added foreign DNA (sv40, fluorescent proteins)
+- gtf file with protein coding genes
+- bed file with  exons from protein coding genes
+- gene metadata
+- STAR mappable genome
+
+
+
+# Dependencies
+```{r}
+library(reticulate)
+library(tidyverse)
+options(reticulate.repl.quiet = TRUE)
+options(dplyr.summarise.inform=F)
+```
+
+
+```{python}
+import sys
+import pandas
+```
+
+# Addition of foreign  sequences
+The following foreign sequences are added to the genome fasta and to the GTF file
+- mCherry (high %ID to tdTomato)
+- mKate2 (high %ID mBFP)
+- EGFP (high %ID to EYFP and BFP)
+- tGFP
+- SV40 antigen
+- TSO concatemere
+- ERCC spike-in
+
+# Genome fasta file
+The current genome file Mus_musculus.GRCm38.dna.primary_assembly.fa.gz is downloaded from ensembl. The foreign DNA (fd) is added. 
+```{bash}
+zcat Mus_musculus.GRCm38.dna_sm.primary_assembly.fa.gz | awk '!/^>/ { printf "%s", $0; n = "\n" } /^>/ { print n $0; n = "" } END { printf "%s", n }' | awk '{print $1}' > Musmu_GRCm38_primary.fas
+cat Musmu_GRCm38_primary.fas Foreign_DNA.fas > Musmu_GRCm38_primary_fd.fas
+```
+
+
+# Genome GTF
+The current GTF file Mus_musculus.GRCm38.100.gtf.gz from ensembl is downloaded. 
+```{bash}
+zcat Mus_musculus.GRCm38.100.gtf.gz | awk -F "\t" 'NF==9' > Musmu_GRCm38.100.gtf
+cat Musmu_GRCm38.100.gtf Foreign_DNA.gtf  > Musmu_GRCm38.100_fd.gtf
+```
+
+
+# Cleaning of Gene models
+In the following code, we will make a reduced GTF file with the protein coding genes only. In addition, the exons will be 'flattened' into a single supertranscript with the projection of all exons belonging to that gene. The GTF is then converted to a bedfile.
+
+We want to keep only the exon info as the info about gene and transcript biotype is found there. Eventually, gene and transcript line will be made for each gene i.e the supertranscript. 
+
+The information about selenocystein is not kept as it is not relevant to read count
+
+For selection of protein coding genes, we extract the exons with transcript_biotype "protein_coding". At this point, all exons are kept regardless of gene_source.  
+```{bash}
+# selection of exons from protein-coding transcripts 
+cat Musmu_GRCm38.100_fd.gtf | awk '$3=="exon"' | grep 'transcript_biotype "protein_coding"' > protcod_1
+```
+535186 exons belonging to 21981 genes remain. 
+
+The information is then parsed into a more friendly table. Information about gene_ID, gene_version, and gene_name are kept. The gene_source is also kept for priority in case of downstream conflicts (e.g two genes with the same name). 
+We check that keeping the ;-delimited elements 1-2 and 6-7 of field 9 work for that. 
+The genes that do not have a gene_name are given the EnsID as name 
+
+The foreign DNA is added back
+```{bash}
+cat protcod_1 | sed 's/; /\t/g' | cut -f9 | grep -v 'gene_id'  #OK
+cat protcod_1 | sed 's/; /\t/g' | cut -f10 | grep -v 'gene_version'  #OK
+cat protcod_1 | sed 's/; /\t/g' | cut -f14 | grep -v 'gene_name'  # OK
+cat protcod_1 | sed 's/; /\t/g' | cut -f15 | grep -v 'gene_source'  # OK
+
+cat protcod_1 | grep 'gene_name' | sed 's/; /\t/g' | cut -f1,4,5,7,9,10,14,15 | sed 's/gene_id //g' | sed 's/gene_version //g' | sed 's/gene_name //g' | sed 's/gene_source //g'  |  sed 's/"//g' > protcod_2
+
+cat Foreign_DNA.gtf | awk 'OFS="\t"{print $1, $4, $5, $7, $1, 1, $1, "CP"}' > Foreign_DNA_2
+cat protcod_2 Foreign_DNA_2 > protcod_2fd 
+```
+
+This is a good point to identify and remove cases where two genes with different ID have the same name
+```{bash}
+cat protcod_2fd | cut -f5,7 | sort | uniq | cut -f1 | sort | uniq -c | awk -d" " '{print $(NF-1)}' | grep -v '1'
+# no hit, i.e the same EnsID is not used twice
+
+cat protcod_2fd | cut -f5,7 | sort | uniq | cut -f2 | sort | uniq -c | awk -d" " '$(NF-1)>1{print $NF}'  > doublet_gene_names
+cat protcod_2fd | grep -w -f doublet_gene_names | cut -f1,5,7,8| uniq | sort -k3,3 -k4,4 > doublet_genes_table
+```
+27 genes have two or three EnsIDs associated to the same name: 
+Aldoa, Arhgap26, Arhgef4, Atp5o, Ccl19, Ccl21a, Ccl21b, Ccl27a, Ddit3, Dpep2, Fam205a2, Fam220a, Gcat, Gm28040, Gm3286, Il11ra2, Jakmip1, Ndor1, Nnt, Olfr290, Pakap, Pcdha11, Ptp4a1, Septin2, St6galnac2, Vmn1r216, Zc3h11a
+Each gene is checked manually in the browser and a list of EnsIDs to be removed is generated
+The genes are kept in priority order Ensembl_havana>Havana>Ensembl
+Genes from the allelic and fix patches alternate sequences are removed
+removed genes are:
+7       ENSMUSG00000114515      Aldoa   havana
+18      ENSMUSG00000118193      Arhgap26        havana
+1       ENSMUSG00000118272      Arhgef4 havana
+16      ENSMUSG00000116933      Atp5o   havana
+JH584294.1      ENSMUSG00000094661      Ccl19   ensembl
+JH584294.1      ENSMUSG00000095320      Ccl21a  ensembl
+JH584293.1      ENSMUSG00000096873      Ccl21b  ensembl
+GL456350.1      ENSMUSG00000096271      Ccl21b  ensembl
+JH584293.1      ENSMUSG00000095247      Ccl27a  ensembl
+JH584294.1      ENSMUSG00000093828      Ccl27a  ensembl
+10      ENSMUSG00000116429      Ddit3   havana
+8       ENSMUSG00000053687      Dpep2   havana
+GL456350.1      ENSMUSG00000079774      Fam205a2        ensembl
+5       ENSMUSG00000083012      Fam220a ensembl_havana
+15      ENSMUSG00000116378      Gcat    ensembl_havana
+1       ENSMUSG00000098306      Gm28040 havana
+1       ENSMUSG00000115958      Gm28040 havana
+GL456354.1      ENSMUSG00000094337      Gm3286  ensembl
+JH584293.1      ENSMUSG00000095456      Il11ra2 ensembl
+JH584294.1      ENSMUSG00000095623      Il11ra2 ensembl
+5       ENSMUSG00000113373      Jakmip1 havana
+2       ENSMUSG00000115074      Ndor1   havana
+2       ENSMUSG00000115018      Ndor1   havana
+13      ENSMUSG00000116207      Nnt     ensembl_havana
+7       ENSMUSG00000116179      Olfr290 ensembl
+4       ENSMUSG00000038729      Pakap   ensembl_havana
+4       ENSMUSG00000090053      Pakap   ensembl_havana
+18      ENSMUSG00000102206      Pcdha11 ensembl_havana
+1       ENSMUSG00000026064      Ptp4a1  havana
+1       ENSMUSG00000026276      Septin2 havana
+11      ENSMUSG00000110170      St6galnac2      havana
+13      ENSMUSG00000116057      Vmn1r216        ensembl
+1       ENSMUSG00000116275      Zc3h11a ensembl
+
+```{bash}
+cat protcod_2fd | grep -v -f removed_doublets_EnsID > protcod_3
+```
+534870 exons belonging to 21949 genes remain.
+
+To make sure all exons of the same gene come in a row (even for overlapping or nested genes), the file is sorted first by gene ID, then by start position. Exact duplicate exons are already flattened in the process.
+```{bash}
+cat protcod_3 | sort -k5,5 -k2,2n -k3,3n | uniq > protcod_4
+```
+285976 exons belonging to 21949 genes remain
+
+A python script is used to flatten the overlapping exons into a projection. The idea is to loop through the exons of a gene and print the Superexon when an exon start > the previous max exon end, i.e when a non-covered intron is detected. 
+```{python}
+# this script takes a table with chr-start-end-strand-gene_ID-Gene_version-Gene_Name-Gene_source for each exon. Exons are ordered first by Gene_ID, then by start coordinate
+
+# it returns a similar table in which overlapping features are flattened with following rules
+# - when two exons from same gene overlap, the two exons are merged into one
+# - when an exon is nested into another exon, the nested exon is deleted
+# - overlapping exons from different genes are not treated by this script
+
+
+import sys
+
+infile = sys.argv[1]
+
+# A function that takes a list of exons start and end coordinates and outputs the supertranscript exons coordinates (i.e super-exons)
+def get_ST(inlist):
+    prevstart = int()
+    prevend = int()
+    SE = str()
+    SEstart = int(0)
+    SEend = int(0)
+    STs = list()
+
+    for line in inlist:
+        line = line.strip()
+        start = int(line.split()[0])
+        end = int(line.split()[1])
+
+        if start > SEend:
+            if SEend > 0:
+                STs.append([SEstart, SEend])
+
+            SEstart = start
+            SEend = end
+
+        elif end > SEend:
+            SEend = end
+
+    STs.append([SEstart, SEend])
+
+    return STs
+
+# the chore of the script loops through the exon lines and stores the info about each gene into variables and a list of exon positions
+prevID = str()
+ID = str()
+chrom = str()
+version = str()
+name = str()
+source = str()
+
+for line in open(infile):
+    ID = line.split()[4]
+
+    if ID!=prevID:
+
+        # prints the previous ST for all the exons in list and prevgene info in memory. All of it in ensembl gtf format
+        if prevID!="":
+            STs = get_ST(exons_list)
+            gene_start = str((STs[0])[0])
+            gene_end = str((STs[-1])[-1])
+            print chrom + "\t" + source + "\tgene\t" + gene_start + "\t" + gene_end  + "\t.\t" + strand + "\t.\t" + "gene_id \"" + prevID + "\"; " + "gene_version \"" +  version + "\"; " + "gene_name \"" + name + "\";"
+
+            for exon in STs:
+                print chrom + "\t" + source + "\texon\t" + str(exon[0]) + "\t" + str(exon[1]) + "\t.\t" + strand + "\t.\t" + "gene_id \"" + prevID + "\"; " + "gene_version \"" +  version + "\"; " + "gene_name \"" + name + "\";"
+
+        # puts the new gene info in memory
+        line = line.strip()
+        chrom = line.split()[0]
+        strand = line.split()[3]
+        version = line.split()[5]
+        name = line.split()[6]
+        source = line.split()[7]
+
+        # put the first exon in list
+        Ex_start = line.split()[1]
+        Ex_end = line.split()[2]
+        exons_list = list()
+        exons_list.append(Ex_start+"\t"+Ex_end)
+
+    elif ID==prevID:
+        Ex_start = line.split()[1]
+        Ex_end = line.split()[2]
+        exons_list.append(Ex_start+"\t"+Ex_end)
+
+    prevID = ID
+
+# at the end prints the last gene
+if prevID!="":
+    STs = get_ST(exons_list)
+    gene_start = str((STs[0])[0])
+    gene_end = str((STs[-1])[-1])
+    print chrom + "\t" + source + "\tgene\t" + gene_start + "\t" + gene_end  + "\t.\t" + strand + "\t.\t" + "gene_id \"" + prevID + "\"; " + "gene_version \"" +  version + "\"; " + "gene_name \"" + name + "\";"
+
+    for exon in STs:
+        print chrom + "\t" + source + "\texon\t" + str(exon[0]) + "\t" + str(exon[1]) + "\t.\t" + strand + "\t.\t" + "gene_id \"" + prevID + "\"; " + "gene_version \"" +  version + "\"; " + "gene_name \"" + name + "\";"
+```
+
+```{bash}
+python flatten_exons.py protcod_4 > protcod_4_flat
+```
+
+We will now remove the genes that overlap with two other genes, as they are considered due to bi-cistronic transcripts
+```{bash}
+cat protcod_4_flat | awk '$3=="gene"' | sed 's/"/\t/g' | awk 'OFS="\t" {print $1, $4, $5, $10, $16, $2}' | sort -k1,1 -k3,3n > protcod_5
+```
+
+A 3-genes sliding window is run, scoring whether the middle genes overlaps with, 0, 1 or 2 genes.
+```{python}
+import sys
+
+infile = sys.argv[1]
+
+# Takes in the data and put in a list
+pos_data = list()
+for line in open(infile):
+    line = line.strip()
+    pos_data.append(line)
+
+# function that takes a list of 3 genes and outputs an integer representing the number of genes overlapping with the central one
+def count_overlap(inlist):
+    end_a = int(inlist[0].split()[2])
+    beg_b = int(inlist[1].split()[1])
+    end_b = int(inlist[1].split()[2])
+    beg_c = int(inlist[2].split()[1])
+    central_gene_id = inlist[1].split()[3]
+    central_gene_name = inlist[1].split()[4]
+    central_gene_source = inlist[1].split()[5]
+
+    k = int(0)
+    l = int(0)
+
+    if end_a > beg_b:
+        k = 1
+    if beg_c < end_b:
+        l = 1
+
+    ol_count = k+l
+
+    outstr = central_gene_name + "\t" + central_gene_id + "\t" + central_gene_source + "\t" + str(ol_count)
+    return outstr
+
+# Makes a 3-genes window and loops
+trigene = list()
+i = int(0)
+while i<=len(pos_data)-3:
+    trigene = pos_data[i:i+3]
+    print count_overlap(trigene)
+    i = i+1
+```
+
+```{bash}
+python detect_bicistronic_genes.py protcod_5 > protcod_6
+```
+
+3807 genes overlap with another gene, i.e 1661 gene pairs overlap.  
+469 genes overlap with two other genes. At visual inspection in the browser, many of those 3807 genes are bona-fide overlapping genes, coding for non-overlapping proteins.
+
+A blast approach is taken to identify genes that are merely another transcript of an existing gene. Each protein sequence should blast only to itself at 100% identity. 
+Pairs of proteins with a 100% blast hits are identified and only one is kept
+
+A list of 3710 suspicious genes with potential overlap to adjacent genes is made after removing the foreign DNA genes wich appear as overlapping because of tiny chromosomes. 
+```{bash}
+cat protcod_6 | awk '$3>0' | cut -f2 | grep 'ENS' > susp_doublets
+```
+
+
+The protein sequence for these 3710 genes is extracted from the Ensemble protein fasta file. The file Mus_musculus.GRCm38.pep.all.fa was downloaded from Ensembl on 12/5-2020. 
+```{bash}
+# makes the sequence one-lined
+cat Mus_musculus.GRCm38.pep.all.fa | awk '!/^>/ { printf "%s", $0; n = "\n" } /^>/ { print n $0; n = "" } END { printf "%s", n } ' > Musmu_prot_1
+
+# makes a table with gene_id and sequence
+cat Musmu_prot_1 | sed 's/>.*gene://g' | sed 's/\./\t/g' | awk '{if (NR%2==1) {printf $1"\t"} else {print $1}}' > Musmu_prot_2
+
+# selects the longest prot from each gene
+cat Musmu_prot_2 | awk '{print $1"\t"$2"\t"length($2)}' | sort -k1,1 -k3,3nr | sort -u -k1,1 > Musmu_prot_3
+
+# selects the 3699 genes and prints a fasta
+cat Musmu_prot_3 | grep -f susp_doublets | awk '{print ">"$1"\n"$2}' > 3710_susp_prot.fas
+```
+
+A blast is made keeping 3 hits and a pident threshold at 99%. Only the 3710 genes are tested. 
+```{bash}
+makeblastdb -in  3710_susp_prot.fas -dbtype prot
+
+blastp -query 3710_susp_prot.fas -db 3710_susp_prot.fas -outfmt "6 qseqid sseqid length pident" -max_target_seqs 3 > susp_on_susp_hits_1
+cat susp_on_susp_hits_1 | awk '$4>99' | awk '$1!=$2' | awk '$3>50' | cut -f1,2 | sort | uniq > susp_on_susp_hits_2
+```
+
+
+susp_on_susp_hits_2 and protcod_6 are loaded to R to integrate the gene_name and gene_source information to the pairs of blast-matching genes.
+```{r, warning=FALSE, message=FALSE}
+library(data.table)
+library(tidyverse)
+
+protcod_6<-fread("protcod_6") %>% 
+    `colnames<-`(c("gene", "ID", "source", "num_ol")) %>% 
+    select(-num_ol)
+
+susp_on_susp_hits_2<-fread("susp_on_susp_hits_2", header = FALSE) %>% 
+    rename(query_id = V1, hit_id = V2)
+
+queries_annot<-left_join(x=susp_on_susp_hits_2, y=protcod_6, by=c("query_id" = "ID")) %>% 
+    select(query_id, query_gene = gene, query_source = source)
+hits_annot<-left_join(x=susp_on_susp_hits_2, y=protcod_6, by=c("hit_id" = "ID")) %>% 
+    select(hit_id, hit_gene = gene, hit_source = source)
+blastp_pairs_annot<-cbind(queries_annot, hits_annot)
+blastp_pairs_annot
+```
+
+The data is split into categories based on the source and based on the name. 
+First we distinguish the source pairs
+```{r}
+blastp_pairs_annot %>% 
+    select(query_source, hit_source) %>% 
+    group_by_all() %>% 
+    summarise(n=n()) %>% 
+    arrange(query_source, hit_source)
+```
+
+All nine combinations are found, although in different proportions.
+For the combinations with <= 10 genes, the genes are checked manually in the browser. A list of genes to remove is made. 
+```{r}
+blastp_pairs_annot %>% 
+    filter(query_source=="ensembl" & hit_source=="ensembl")
+```
+For all 8 ensembl-ensembl pairs, both are equaly valid and lie at different loci in the assembly; therefore both are kept. 
+
+```{r}
+blastp_pairs_annot %>% 
+    filter(query_source=="havana" & hit_source=="havana")
+```
+For the havana-havana pairs: ENSMUSG00000070425 and ENSMUSG00000113262 are bicistronic; therefore deprecated. 
+Gm11236 and Gm11238 are both valid and kept.
+
+```{r}
+deprecated_doublets<-c("ENSMUSG00000070425", "ENSMUSG00000113262")
+```
+
+
+```{r}
+blastp_pairs_annot %>% 
+    filter(query_source=="ensembl" & hit_source=="ensembl_havana")
+
+blastp_pairs_annot %>% 
+    filter(query_source=="ensembl" & hit_source=="havana")
+
+blastp_pairs_annot %>% 
+    filter(query_source=="ensembl_havana" & hit_source=="ensembl")
+
+blastp_pairs_annot %>% 
+    filter(query_source=="havana" & hit_source=="ensembl")
+```
+For the ensembl-ensembl_havana pair (same genes as ensembl_havana-ensembl pair): Ccl21c and Ccl21a are bona-fide different genes on different loci; both kept
+For the ensembl-havana pair (same genes as havana-ensembl pair): CT868723.1 and Gm12394 are bona-fide different genes on different loci; both kept
+
+```{r}
+eh_h<-blastp_pairs_annot %>% 
+    filter(query_source=="ensembl_havana" & hit_source=="havana")
+
+h_eh<-blastp_pairs_annot %>% 
+    filter(query_source=="havana" & hit_source=="ensembl_havana")
+
+eh_h
+h_eh
+```
+For the havana-ensembl_havana and ensembl_havana-havana pairs: the havana gene was systematically a worse gene model (bicistronic or poor duplicate), so deprecated.
+
+```{r}
+eh_h_deprecated<-c(eh_h$hit_id, h_eh$query_id) %>% unique()
+deprecated_doublets<-c(deprecated_doublets, eh_h_deprecated)
+```
+
+```{r}
+blastp_pairs_annot %>% 
+    filter(query_source=="ensembl_havana" & hit_source=="ensembl_havana")
+```
+For the ensembl_havana-ensembl_havana pairs: each of the 63 pairs was judged separately. The folowing genes were deprecated:
+ENSMUSG00000018752, ENSMUSG00000115293, ENSMUSG00000107068, ENSMUSG00000035370, ENSMUSG00000041716, ENSMUSG00000111409, ENSMUSG00000070354,  ENSMUSG00000089837, ENSMUSG00000093789, ENSMUSG00000094410.
+
+```{r}
+deprecated_doublets<-c(deprecated_doublets, "ENSMUSG00000018752", "ENSMUSG00000115293", "ENSMUSG00000107068", "ENSMUSG00000035370", "ENSMUSG00000041716", "ENSMUSG00000111409", "ENSMUSG00000070354", "ENSMUSG00000089837", "ENSMUSG00000093789", "ENSMUSG00000094410")
+
+write.table(deprecated_doublets, "deprecated_doublets")
+```
+
+We make a list of the deprecated genes and their pair
+```{r}
+blastp_pairs_annot %>% 
+    filter(query_id %in% deprecated_doublets)
+```
+
+The deprecated genes are removed from the gtf file
+```{bash}
+cat -v deprecated_doublets | cut -d " " -f2  | sed 's/"//g' | sed 's/\^M$//g' | grep -v '^x$' > deprecated_doublets_2
+cat Musmu_GRCm38.100_protcod_fd.gtf | grep -v -f deprecated_doublets_2 > Musmu_GRCm38.100_protcod_fd.gtf
+```
+
+A gene model bedfile is made from the Musmu_GRCm38.100_protcod_fd.gtf file.  
+gtf is pre-processed in bash
+```{bash}
+cat Musmu_GRCm38.100_protcod_fd.gtf | sed 's/ \"/\t/g' | sed 's/\";/\t/g' | awk '{OFS="\t"} $3=="exon" {print $1, $4, $5, $10"_"$14, 0, $7}' > protcod_gtf_preproc
+```
+
+Making exon annotation bed file in R
+```{r}
+protcod_table_1<-read.table("protcod_gtf_preproc") %>% 
+  rename(chrom=V1, start=V2, end=V3, geneID_genename=V4, score=V5, strand=V6)
+
+protcod.bed<-protcod_table_1 %>% 
+  group_by(geneID_genename) %>% 
+  mutate(Ex_num=ifelse(strand=="+", 1:n(), rev(1:n()))) %>% 
+  mutate(feature_name = paste(geneID_genename, paste("exon", Ex_num, sep=""), sep="_")) %>% 
+  ungroup() %>% 
+  select(-geneID_genename) %>% 
+  select(chrom, start, end, feature_name, score, strand)
+
+protcod.bed<-read.table("Musmu_GRCm38.100_protcod_fd.bed", col.names = c("chrom", "start", "end", "feature_name", "score", "strand"), sep = "\t")
+```
+
+The exons are reordered by position on chromosomes. Chromosomes are re-ordered manually. 
+```{r}
+Chromosomes<-c(as.character(1:19), "X", "Y", "MT", "GL456210.1", "GL456211.1", "GL456212.1", "GL456216.1", "GL456219.1", "GL456221.1", "GL456233.1", "GL456350.1", "GL456354.1", "JH584292.1", "JH584293.1", "JH584294.1", "JH584295.1", "JH584296.1", "JH584297.1", "JH584298.1", "JH584299.1", "JH584303.1", "JH584304.1", "EGFP", "mCherry", "mKate2", "SV40", "tGFP", "TSO", "ERCC-00002", "ERCC-00003", "ERCC-00004", "ERCC-00009", "ERCC-00012", "ERCC-00013", "ERCC-00014", "ERCC-00016", "ERCC-00017", "ERCC-00019", "ERCC-00022", "ERCC-00024", "ERCC-00025", "ERCC-00028", "ERCC-00031", "ERCC-00033", "ERCC-00034", "ERCC-00035", "ERCC-00039", "ERCC-00040", "ERCC-00041", "ERCC-00042", "ERCC-00043", "ERCC-00044", "ERCC-00046", "ERCC-00048", "ERCC-00051", "ERCC-00053", "ERCC-00054", "ERCC-00057", "ERCC-00058", "ERCC-00059", "ERCC-00060", "ERCC-00061", "ERCC-00062", "ERCC-00067", "ERCC-00069", "ERCC-00071", "ERCC-00073", "ERCC-00074", "ERCC-00075", "ERCC-00076", "ERCC-00077", "ERCC-00078", "ERCC-00079", "ERCC-00081", "ERCC-00083", "ERCC-00084", "ERCC-00085", "ERCC-00086", "ERCC-00092", "ERCC-00095", "ERCC-00096", "ERCC-00097", "ERCC-00098", "ERCC-00099", "ERCC-00104", "ERCC-00108", "ERCC-00109", "ERCC-00111", "ERCC-00112", "ERCC-00113", "ERCC-00116", "ERCC-00117", "ERCC-00120", "ERCC-00123", "ERCC-00126", "ERCC-00130", "ERCC-00131", "ERCC-00134", "ERCC-00136", "ERCC-00137", "ERCC-00138", "ERCC-00142", "ERCC-00143", "ERCC-00144", "ERCC-00145", "ERCC-00147", "ERCC-00148", "ERCC-00150", "ERCC-00154", "ERCC-00156", "ERCC-00157", "ERCC-00158", "ERCC-00160", "ERCC-00162", "ERCC-00163", "ERCC-00164", "ERCC-00165", "ERCC-00168", "ERCC-00170", "ERCC-00171")
+
+Chrom_rank<-tibble(chrom=Chromosomes, chrom_rank=1:139)
+
+protcod.bed<-protcod.bed %>% 
+  left_join(Chrom_rank, by="chrom") %>% 
+  arrange(chrom_rank, start) %>% 
+  select(-chrom_rank)
+  
+write.table(protcod.bed, "Musmu_GRCm38.100_protcod_fd.bed", col.names = FALSE, sep = "\t", quote = FALSE, row.names = FALSE)
+```
+
+# Gene_metadata
+The per-gene total_exon_size is calculated and a gene metadata table is made
+```{r}
+Gene_md<- protcod.bed %>% 
+  mutate(Ex_length=end-start+1) %>% 
+  separate(feature_name, into = c("Gene_ID", "Gene_name", NA), sep="_") %>% 
+  group_by(Gene_ID, Gene_name, chrom, strand) %>% 
+  summarize(Exon_count=n(), Start = min(start), End=max(end), Tot_exon_length=sum(Ex_length)) %>% 
+  ungroup() %>% 
+  left_join(Chrom_rank, by="chrom") %>% 
+  arrange(chrom_rank, Start) %>% 
+  select(Gene_ID, Gene_name, Tot_exon_length, Exon_count, Chr=chrom, Start, End, Strand=strand)
+
+write.table(Gene_md, "Musmu_GRCm38.100_protcod_fd_Gene_md.txt", col.names = FALSE, sep = "\t", quote = FALSE, row.names = FALSE)
+```
+
+
+# STAR mappable genome
+A STAR-mappable genome is made using the full GTF. foreign DNA are included. 
+```{bash}
+#!/bin/bash -l
+
+#SBATCH -A snic2018-8-20
+#SBATCH -p node -n 16
+#SBATCH -t 06:00:00
+#SBATCH -J mappable_genome
+
+module load bioinfo-tools
+module load star
+
+STAR --runMode genomeGenerate --runThreadN 16 --limitGenomeGenerateRAM 80000000000 --genomeDir ./Musmu_mappable_genome_CP_12May2020 --genomeFastaFiles Musmu_GRCm38_primary_fd.fas --genomeSAindexNbases 4 --sjdbGTFfile Musmu_GRCm38.100_fd.gtf --sjdbOverhang 75
+```
+

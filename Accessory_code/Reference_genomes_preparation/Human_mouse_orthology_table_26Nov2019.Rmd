@@ -1,0 +1,311 @@
+---
+title: "Human-mouse orthology table"
+author: "Cedric"
+date: "16/11/2019"
+output:
+  html_document:
+    toc: true
+    toc_float: true
+    toc_depth: 3
+    number_sections: true
+    theme: united
+    highlight: textmate
+    df_print: paged
+    code_folding: none
+    self_contained: false
+    keep_md: false
+    encoding: "UTF-8"
+    css: ["assets/lab.css"]
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# synopsis
+In a fisrt instance we will make a list of genes with clear one-to-one orthology between Human and mouse. The homology type annotation (orthology_one2one) is based on the Ensembl trees. An orthology table is downloaded manually from Ensembl Biomart using Human as a reference, i.e Human-mouse orthology table.  
+
+# Data
+The orthology table for the latest assemblies and annotations as of 16 Nov 2019 are downloaded. 
+
+Human data:
+Database: Ensembl genes 98
+Dataset: Human genes GRCh38.p13
+
+Mouse data: 
+Database: Ensembl genes 98
+Dataset: Mouse genes GRCm38.p6
+
+
+Downloaded manually at ensembl/biomart, with  all gene features in both species, including Human_GeneID, Human_geneName, Mouse_GeneID, Mouse_geneName, orthology_confidence, homology_type. 
+Each transcript is represented by a line
+Saved as HM_mart_export_021129191539.txt 
+
+`data.table::fread` is used to avoid issues with quote characters and to include the colnames. Problematic characters such as `%` and `/` are replaced in the colnames
+
+```{r echo=FALSE, include=FALSE}
+library(tidyverse)
+library(data.table)
+```
+
+```{r}
+Human_mouse_orthology_full<-fread("HM_mart_export_021120191539.txt") %>% as.data.frame()
+colnames(Human_mouse_orthology_full)<-colnames(Human_mouse_orthology_full) %>% 
+  str_replace_all(" ", ".") %>% 
+  str_replace_all("/", ".") %>%
+  str_replace_all("\\[", ".") %>% 
+  str_replace_all("\\]", ".") %>% 
+  str_replace_all(",", ".") %>% 
+  str_replace_all("\\(", ".") %>% 
+  str_replace_all("\\)", ".") %>%
+  str_replace_all("-", ".") %>% 
+  str_replace_all("%", "percent")
+```
+
+
+# selection of one-to-one orthologs
+For this version of the orthology table, only protein-coding genes will be kept. 
+The coding genes are selected on the basis of having a protein id.
+Since we are not interested in isoforms, only one entry per Gene ID pair is kept. Only useful information is kept and varialbles are renamed on the fly. 
+```{r}
+Human_mouse_orthology_protcod<-Human_mouse_orthology_full %>%
+  filter(Protein.stable.ID!="") %>%
+  select(Homsa_ID = Gene.stable.ID, Homsa_gene_name = Gene.name, Homsa_Chr = Chromosome.scaffold.name, Homsa_start = Gene.start..bp., Homsa_end = Gene.end..bp., Musmu_ID = Mouse.gene.stable.ID, Musmu_gene_name = Mouse.gene.name, Musmu_Chr = Mouse.chromosome.scaffold.name, Musmu_start = Mouse.chromosome.scaffold.start..bp., Musmu_end = Mouse.chromosome.scaffold.end..bp., Homology_type = Mouse.homology.type, Synteny_score = Mouse.Gene.order.conservation.score, pident = percentid..query.gene.identical.to.target.Mouse.gene, orthology_confidence = Mouse.orthology.confidence..0.low..1.high.) %>% 
+  distinct(Homsa_ID, Musmu_ID, .keep_all = TRUE)
+```
+
+Several genes are represented several times because of the alternate sequence chromosomes. The chromosomes of allelic and fix patches alternate sequences are removed.  
+```{r}
+Human_mouse_orthology_protcod<-Human_mouse_orthology_protcod %>% filter(!grepl("HSCHR",Homsa_Chr)) %>% filter(!grepl("PATCH",Homsa_Chr))%>% filter(!grepl("TEST", Homsa_Chr))
+
+Human_mouse_orthology_protcod
+
+#write.table(Human_mouse_orthology_protcod, "Human_mouse_orthology_protcod", sep = "\t", quote = FALSE, col.names = TRUE, row.names = FALSE)
+```
+
+
+The one-to-one orthologs are selected
+```{r}
+Human_mouse_orthology_1to1<-Human_mouse_orthology_protcod %>% filter(Homology_type=="ortholog_one2one")
+
+Human_mouse_orthology_1to1
+```
+15898 Human genes have a 1-to-1 orthology to mouse genes. That seems plausible.
+
+Let us verify all genes have a distinct unique name among the Human and mouse genes of these one-to-one pairs
+```{r}
+Human_mouse_orthology_1to1 %>% 
+  group_by(Homsa_gene_name) %>%
+  filter(n()>1) %>% 
+  select(Homsa_ID, Homsa_gene_name, Musmu_ID, Musmu_gene_name)
+
+Human_mouse_orthology_1to1 %>% 
+  group_by(Musmu_gene_name) %>%
+  filter(n()>1) %>% 
+  select(Homsa_ID, Homsa_gene_name, Musmu_ID, Musmu_gene_name)
+```
+Three genes in mouse have the same name as another gene, ENSMUSG00000113373	Jakmip1, ENSMUSG00000118272	Arhgef4, and ENSMUSG00000110170	St6galnac2, despite being ono-to-one orthologs to ENSG00000284684	AC092442.1, ENSG00000284479	SMIM39, and ENSG00000284526	AC015802.6, respectively.
+To avoid confusions, the 3 pairs with gene name not matching are removed. 
+```{r}
+deprecated_1<-c("ENSG00000284684", "ENSG00000284479", "ENSG00000284526")
+
+Human_mouse_orthology_1to1<-Human_mouse_orthology_1to1 %>% 
+  filter(!Homsa_ID %in% deprecated_1)
+```
+
+
+# Recovery of wrongly annotated one-to-one orthologs 
+Let us check whether there are pairs annotated "otholog_one2many" which actually have a 1-to-1 relationship
+```{r}
+Human_mouse_orthology_protcod %>% 
+  filter(Homology_type=="ortholog_one2many") %>% 
+  group_by(Homsa_ID) %>% 
+  filter(n()==1) %>% 
+  ungroup() %>% 
+  group_by(Musmu_ID) %>% 
+  filter(n()==1)
+```
+
+Manual verification of the Ensembl tree shows Muc1 is a bona fide 1-to-1 ortholog. ENSG00000185499 should be recovered. 
+```{r}
+HM_1to1_to_recover<-c("ENSG00000185499")
+```
+
+
+Let's examine the one-to-two and two-to-one orthologs. Both types are labeled one2many. 
+```{r}
+Human_mouse_orthology_protcod %>% 
+  filter(Homology_type=="ortholog_one2many") %>% 
+  group_by(Homsa_ID) %>% 
+  filter(n()==2) %>% 
+  select(Homsa_ID, Homsa_gene_name, Musmu_ID, Musmu_gene_name) %>% 
+  arrange(Homsa_gene_name)
+
+Human_mouse_orthology_protcod %>% 
+  filter(Homology_type=="ortholog_one2many") %>% 
+  group_by(Musmu_ID) %>% 
+  filter(n()==2) %>% 
+  select(Homsa_ID, Homsa_gene_name, Musmu_ID, Musmu_gene_name) %>% 
+  arrange(Musmu_gene_name)
+```
+
+There are 320 cases of one human to two Mouse. There are 436 cases of one Mouse to two Human genes. If both paralogs map to the same locus, i.e if the coordinate range overlaps, the one with a matching name, if any, is recovered as a one-to-one ortholog. The homology type is changed to "corrected_1to1". Cases where both paralogs have the same name are treated manually below.
+
+First, for the 320 one Human-two Mouse cases.
+```{r}
+HM_1to2<-Human_mouse_orthology_protcod %>% 
+  filter(Homology_type=="ortholog_one2many") %>% 
+  group_by(Homsa_ID) %>% 
+  filter(n()==2) %>% 
+  arrange(Homsa_ID) %>% 
+  select(Homsa_ID, Homsa_gene_name, Musmu_ID, Musmu_gene_name, Musmu_Chr, Musmu_start, Musmu_end)
+
+HM_1to2_grp1<-HM_1to2 %>% 
+ slice(which(row_number() %% 2 == 1))
+ 
+HM_1to2_grp2<-HM_1to2 %>% 
+ slice(which(row_number() %% 2 == 0))
+
+HM_1to2_xy<-full_join(x=HM_1to2_grp1, y=HM_1to2_grp2, by="Homsa_ID") %>% 
+  select(Homsa_ID, Homsa_gene_name = Homsa_gene_name.x, Musmu_ID.x, Musmu_gene_name.x, Musmu_Chr.x, Musmu_start.x, Musmu_end.x, Musmu_ID.y, Musmu_gene_name.y, Musmu_Chr.y, Musmu_start.y, Musmu_end.y)
+
+
+# lists the 238 1to2 orthologs with mouse paralogs at same locus but with different names
+HM_1to2_diffnames_dist_list<-HM_1to2_xy %>% 
+  filter(Musmu_Chr.x==Musmu_Chr.y) %>% 
+  mutate(intergene_distance=max(Musmu_start.x, Musmu_start.y)-min(Musmu_end.x, Musmu_end.y)) %>% 
+  select(Homsa_ID, Homsa_gene_name, Musmu_ID.x, Musmu_gene_name.x, Musmu_ID.y, Musmu_gene_name.y, intergene_distance) %>% 
+  filter(Musmu_gene_name.x!=Musmu_gene_name.y) %>% 
+  arrange(intergene_distance)
+
+HM_1to2_Grp1_to_recover<-HM_1to2_diffnames_dist_list %>%
+  filter(toupper(Musmu_gene_name.x)==Homsa_gene_name) %>%
+  filter(intergene_distance<0) %>%
+  ungroup %>%
+  select(Musmu_ID.x)
+
+HM_1to2_Grp2_to_recover<-HM_1to2_diffnames_dist_list %>%
+  filter(toupper(Musmu_gene_name.y)==Homsa_gene_name) %>%
+  filter(intergene_distance<0) %>%
+  ungroup %>%
+  select(Musmu_ID.y)
+
+# Cases where both mouse paralogs have the same name and that name matches the human name
+HM_1to2_samenames_dist_list<-HM_1to2_xy %>% 
+  filter(Musmu_Chr.x==Musmu_Chr.y) %>% 
+  mutate(intergene_distance=max(Musmu_start.x, Musmu_start.y)-min(Musmu_end.x, Musmu_end.y)) %>% 
+  select(Homsa_ID, Homsa_gene_name, Musmu_ID.x, Musmu_gene_name.x, Musmu_ID.y, Musmu_gene_name.y, intergene_distance) %>%
+  filter(Musmu_gene_name.x==Musmu_gene_name.y &&  toupper(Musmu_gene_name.x)==Homsa_gene_name) %>% 
+  arrange(intergene_distance)
+```
+
+In all 5 cases of 1 human-2 mouse where the two mouse genes have the same name, the two mouse genes overlap. One is either a nearly exact copy of the other one or a polycistronic transcript. The gene to recover is selected by manually examining the gene in the genome browser. 
+```{r}
+HM_1to2_samename_to_recover<-c("ENSMUSG00000025453", "ENSMUSG00000006471", "ENSMUSG00000117310", "ENSMUSG00000006378", "ENSMUSG00000053687")
+```
+
+
+
+Second, for the 436 two Human-one Mouse cases.
+```{r}
+HM_2to1<-Human_mouse_orthology_protcod %>% 
+  filter(Homology_type=="ortholog_one2many") %>% 
+  group_by(Musmu_ID) %>% 
+  filter(n()==2) %>% 
+  arrange(Musmu_ID) %>% 
+  select(Homsa_ID, Homsa_gene_name, Musmu_ID, Musmu_gene_name, Homsa_Chr, Homsa_start, Homsa_end)
+
+HM_2to1_grp1<-HM_2to1 %>% 
+ slice(which(row_number() %% 2 == 1))
+ 
+HM_2to1_grp2<-HM_2to1 %>% 
+ slice(which(row_number() %% 2 == 0))
+
+HM_2to1_xy<-full_join(x=HM_2to1_grp1, y=HM_2to1_grp2, by="Musmu_ID") %>% 
+  select(Homsa_ID.x, Homsa_gene_name.x, Homsa_Chr.x, Homsa_start.x, Homsa_end.x, Homsa_ID.y, Homsa_gene_name.y, Homsa_Chr.y, Homsa_start.y, Homsa_end.y, Musmu_ID, Musmu_gene_name=Musmu_gene_name.x)
+
+
+# lists the 388 2to1 orthologs with human paralogs at same locus but with different names
+HM_2to1_diffnames_dist_list<-HM_2to1_xy %>% 
+  filter(Homsa_Chr.x==Homsa_Chr.y) %>%
+  mutate(intergene_distance=max(Homsa_start.x, Homsa_start.y)-min(Homsa_end.x, Homsa_end.y)) %>% 
+  select(Homsa_ID.x, Homsa_gene_name.x, Homsa_ID.y, Homsa_gene_name.y, Musmu_ID, Musmu_gene_name, intergene_distance) %>% 
+  filter(Homsa_gene_name.x!=Homsa_gene_name.y) %>% 
+  arrange(intergene_distance)
+
+HM_2to1_Grp1_to_recover<-HM_2to1_diffnames_dist_list %>%
+  filter(Homsa_gene_name.x==toupper(Musmu_gene_name)) %>%
+  filter(intergene_distance<0) %>%
+  ungroup %>%
+  select(Homsa_ID.x)
+
+HM_2to1_Grp2_to_recover<-HM_2to1_diffnames_dist_list %>%
+  filter(Homsa_gene_name.y==toupper(Musmu_gene_name)) %>%
+  filter(intergene_distance<0) %>%
+  ungroup %>%
+  select(Homsa_ID.y)
+
+# Cases where both human paralogs have the same name and that name matches the mouse name
+HM_2to1_samenames_dist_list<-HM_2to1_xy %>%
+  filter(Homsa_Chr.x==Homsa_Chr.y) %>% 
+  mutate(intergene_distance=max(Homsa_start.x, Homsa_start.y)-min(Homsa_end.x, Homsa_end.y)) %>% 
+  select(Homsa_ID.x, Homsa_gene_name.x, Homsa_ID.y, Homsa_gene_name.y, Musmu_ID, Musmu_gene_name, intergene_distance) %>%
+  filter(Homsa_gene_name.x==Homsa_gene_name.y &&  Homsa_gene_name.x==toupper(Musmu_gene_name)) %>% 
+  arrange(intergene_distance)
+```
+
+In all 7 cases the  two genes overlap. One is either a nearly exact copy of the first one or a polycistronic transcript. The gene to recover is selected by manually examining the gene in the genome browser. 
+```{r}
+HM_2to1_samename_to_recover<-c("ENSG00000284741", "ENSG00000063438", "ENSG00000285258", "ENSG00000284770", "ENSG00000112096", "ENSG00000033050", "ENSG00000283706")
+```
+
+
+Now the genes labeled 1to2 or 2to1 erroneously are recovered and annotated as corrected_1to1. The final number of genes is 15898-3+1+34+46+5+140+124+7=16252
+```{r}
+Musmu_IDs_to_recover<-unlist(unname(c(HM_1to2_Grp1_to_recover, HM_1to2_Grp2_to_recover, HM_1to2_samename_to_recover)))
+Homsa_IDs_to_recover<-unlist(unname(c(HM_1to1_to_recover, HM_2to1_Grp1_to_recover, HM_2to1_Grp2_to_recover, HM_2to1_samename_to_recover)))
+
+HM_recovered<-Human_mouse_orthology_protcod %>% 
+  filter((Homsa_ID %in% Homsa_IDs_to_recover) | (Musmu_ID %in% Musmu_IDs_to_recover)) %>% 
+  mutate(Homology_type="corrected_1to1")
+
+Human_mouse_orthology_v1<-rbind(Human_mouse_orthology_1to1, HM_recovered) %>% 
+  select(Homsa_ID, Homsa_gene_name, Musmu_ID, Musmu_gene_name, Homology_type, Synteny_score, pident, orthology_confidence)
+
+write.table(Human_mouse_orthology_v1, "Human_mouse_orthology_v1.txt", sep = "\t")
+
+Human_mouse_orthology_v1 %>%  filter(Musmu_gene_name=="Cxcl2")
+```
+
+The gene pairs based on trees (Human_mouse_orthology_v1) is compared to gene pairs based on name
+```{r}
+HM_v1_pairs<-Human_mouse_orthology_v1 %>% 
+  select(Homsa_ID, Musmu_ID)
+
+HM_byname_pairs<-Human_mouse_orthology_protcod %>% 
+  filter(tolower(Homsa_gene_name)==tolower(Musmu_gene_name)) %>% 
+  select(Homsa_ID, Musmu_ID)
+
+lip<-nrow(intersect(HM_v1_pairs, HM_byname_pairs))
+lvp<-nrow(HM_v1_pairs)
+lnp<-nrow(HM_byname_pairs)
+```
+
+
+```{r, echo=FALSE}
+paste("tree-based only: ", lvp-lip)
+paste("name-based only: ", lnp-lip)
+paste("common: ", lip)
+```
+
+
+A number of mouse marker genes are evaluated to test what proportion are represented in this orthology table.
+```{r}
+CP_markers<-read.table("CP_markers.txt") %>% rename(Marker=V1)
+
+markers_in_HM_orthol<-left_join(x=CP_markers, y=Human_mouse_orthology_v1, by=c("Marker" = "Musmu_gene_name")) 
+markers_in_HM_orthol %>% filter(is.na(Homsa_gene_name))
+```
+
+
+

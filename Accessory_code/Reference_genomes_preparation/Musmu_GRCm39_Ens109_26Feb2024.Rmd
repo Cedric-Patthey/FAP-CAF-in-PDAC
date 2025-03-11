@@ -1,0 +1,534 @@
+---
+title: "Musmu_GRCm39_Ens109"
+author: "Cedric"
+date: "26/06/2023"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Synopsis
+The GRCm39 genome with the Ensemble release 109 annotations as of 26 June 2023 is processed to generate the folowing files
+- Genome assembly fasta file with added foreign DNA (sv40, fluorescent proteins)
+- gtf file with protein coding genes
+- bed file with  exons from protein coding genes
+- bed file with exons and introns from protein coding genes
+- gene metadata
+- STAR mappable genome
+- Cell ranger mappable genome
+- table with genome position and cDNA position
+
+
+# Dependencies
+```{r}
+library(reticulate)
+library(tidyverse)
+options(reticulate.repl.quiet = TRUE)
+options(dplyr.summarise.inform=F)
+```
+
+```{python}
+import sys
+import pandas
+```
+
+# Addition of foreign  sequences
+The following foreign sequences are added to the genome fasta and to the GTF file
+- mCherry (high %ID to tdTomato)
+- mKate2 (high %ID mBFP)
+- EGFP (high %ID to EYFP and BFP)
+- tGFP
+- SV40 antigen
+
+
+# Genome fasta file
+The current genome file Mus_musculus.GRCm39.dna.primary_assembly.fa.gz is downloaded from ensembl. The foreign DNA (fd) is added. 
+```{bash}
+zcat Mus_musculus.GRCm39.dna_sm.primary_assembly.fa.gz | awk '!/^>/ { printf "%s", $0; n = "\n" } /^>/ { print n $0; n = "" } END { printf "%s", n }' | awk '{print $1}' > Musmu_GRCm39_primary.fas
+cat Musmu_GRCm39_primary.fas Foreign_DNA.fas > Musmu_GRCm39_primary_fd.fas
+```
+
+
+# Genome GTF
+The current GTF file Mus_musculus.GRCm39.104.gtf.gz from ensembl is downloaded. 
+```{bash}
+zcat Mus_musculus.GRCm39.109.gtf.gz | awk -F "\t" 'NF==9' > Musmu_GRCm39.109.gtf
+cat Musmu_GRCm39.109.gtf Foreign_DNA.gtf  > Musmu_GRCm39.109_fd.gtf
+```
+
+
+# Cleaning of Gene models
+In the following code, we will make a reduced GTF file with the protein coding genes only. In addition, the exons will be 'flattened' into a single supertranscript with the projection of all exons belonging to that gene. The GTF is then converted to a bedfile.
+
+We want to keep only the exon info as the info about gene and transcript biotype is found there. Eventually, gene and transcript line will be made for each gene i.e the supertranscript. 
+
+The information about selenocystein is not kept as it is not relevant to read count
+
+For selection of protein coding genes, we extract the exons with transcript_biotype "protein_coding". At this point, all exons are kept regardless of gene_source.  
+```{bash}
+# selection of exons from protein-coding transcripts 
+cat Musmu_GRCm39.109_fd.gtf | awk '$3=="exon"' | grep 'transcript_biotype "protein_coding"' > protcod_1
+```
+533532 exons belonging to 21670 genes remain. 
+
+The information is then parsed into a more friendly table. Information about gene_ID, gene_version, and gene_name are kept. The gene_source is also kept for priority in case of downstream conflicts (e.g two genes with the same name). 
+We check that keeping the ;-delimited elements 1-2 and 6-7 of field 9 work for that. 
+The genes that do not have a gene_name are given the EnsID as name 
+
+The foreign DNA is added back
+```{bash}
+cat protcod_1 | sed 's/; /\t/g' | cut -f9 | grep -v 'gene_id'  #OK
+cat protcod_1 | sed 's/; /\t/g' | cut -f10 | grep -v 'gene_version'  #OK
+cat protcod_1 | sed 's/; /\t/g' | cut -f14 | grep -v 'gene_name'  # 201 exons from 77 genes do not have a gene_name; others OK
+cat protcod_1 | sed 's/; /\t/g' | cut -f15 | grep -v 'gene_source'  # OK
+
+cat protcod_1 | grep 'gene_name' | sed 's/; /\t/g' | cut -f1,4,5,7,9,10,14,15 | sed 's/gene_id //g' | sed 's/gene_version //g' | sed 's/gene_name //g' | sed 's/gene_source //g'  |  sed 's/"//g' > protcod_2
+
+cat protcod_1 | grep -v 'gene_name' | sed 's/; /\t/g' | awk 'OFS="\t"{print $1, $4, $5, $7, $10, $12, $10, $20}' | sed 's/"//g' > protcod_2_noname
+
+cat Foreign_DNA.gtf | awk 'OFS="\t"{print $1, $4, $5, $7, $1, 1, $1, "CP"}' > Foreign_DNA_2
+cat protcod_2 protcod_2_noname Foreign_DNA_2 > protcod_2fd 
+```
+
+This is a good point to identify and remove cases where two genes with different ID have the same name
+```{bash}
+cat protcod_2fd | cut -f5,7 | sort | uniq | cut -f1 | sort | uniq -c | awk -d" " '{print $(NF-1)}' | grep -v '1'
+# no hit, i.e the same EnsID is not used twice
+
+cat protcod_2fd | cut -f5,7 | sort | uniq | cut -f2 | sort | uniq -c | awk -d" " '$(NF-1)>1{print $NF}'  > doublet_gene_names
+cat protcod_2fd | grep -w -f doublet_gene_names | cut -f1,5,7,8| uniq | sort -k3,3 -k4,4 > doublet_genes_table
+```
+19 genes have two or three EnsIDs associated to the same name: 
+4933427D14Rik, Aldoa, Atp5o, Ddit3, Dpep2, Fam220a, Fam90a1b, Gcat, Gm28040, Lhb, Ndor1, Nnt, Nrg1, Or5ae1, Pakap, Ptp4a1, Septin2, St6galnac2, Vmn1r216
+
+Each gene is checked manually in the browser and a list of EnsIDs to be removed is generated
+The genes are kept in priority order Ensembl_havana>Havana>Ensembl
+Genes from the allelic and fix patches alternate sequences are removed
+Most removed genes are just duplicates of existing genes, i.e an isoform is called as a new gene. 
+removed genes are:
+11      ENSMUSG00000020807      4933427D14Rik   havana
+7       ENSMUSG00000114515      Aldoa   havana
+16      ENSMUSG00000116933      Atp5o   havana
+10      ENSMUSG00000116429      Ddit3   havana
+8       ENSMUSG00000053687      Dpep2   havana
+5       ENSMUSG00000083012      Fam220a ensembl_havana
+X       ENSMUSG00000118554      Fam90a1b        havana
+15      ENSMUSG00000116378      Gcat    ensembl_havana
+1       ENSMUSG00000098306      Gm28040 havana
+1       ENSMUSG00000115958      Gm28040 havana
+7       ENSMUSG00000118462      Lhb     havana
+2       ENSMUSG00000115074      Ndor1   havana
+2       ENSMUSG00000115018      Ndor1   havana
+13      ENSMUSG00000116207      Nnt     ensembl_havana
+8       ENSMUSG00000118541      Nrg1    havana
+7       ENSMUSG00000116179      Or5ae1    ensembl
+4       ENSMUSG00000038729      Pakap   ensembl_havana
+4       ENSMUSG00000090053      Pakap   ensembl_havana
+1       ENSMUSG00000026064      Ptp4a1  havana
+1       ENSMUSG00000026276      Septin2 havana
+11      ENSMUSG00000110170      St6galnac2      havana
+13      ENSMUSG00000116057      Vmn1r216        ensembl
+
+The following genes are bona fide protein-coding genes with wrong name; still removed for simplicity
+7       ENSMUSG00000114515      Aldoa   havana
+7       ENSMUSG00000118462      Lhb     havana
+
+```{bash}
+cat protcod_2fd | grep -v -f removed_doublets_EnsID > protcod_3
+```
+
+To make sure all exons of the same gene come in a row (even for overlapping or nested genes), the file is sorted first by gene ID, then by start position. Exact duplicate exons are already flattened in the process.
+```{bash}
+cat protcod_3 | sort -k5,5 -k2,2n -k3,3n | uniq > protcod_4
+```
+
+Exons belonging to the same gene are flattened into a supertranscript. The idea is to loop through the exons of a gene and print the Superexon when an exon start > the previous max exon end, i.e when a non-covered intron is detected. 
+overlapping features are flattened with following rules
+- when two exons from same gene overlap, the two exons are merged into one
+- when an exon is nested into another exon, the nested exon is deleted
+- overlapping exons from different genes are not treated by this script
+
+To identify contigs of exons within the same gene, the elegant solution from Mykola Zotko will be used https://stackoverflow.com/questions/48243507/group-rows-by-overlapping-ranges
+
+
+```{python}
+protcod_4 = pandas.read_table("protcod_4", names=["Chr", "Start", "End", "Strand", "Gene_ID", "Version", "Gene_name", "Source"])
+
+protcod_4_int = protcod_4.sort_values(["Chr", "Gene_ID", "Start"])
+
+protcod_4_int['End_cummax'] =  protcod_4_int.groupby("Gene_ID")['End'].cummax()
+
+protcod_4_int['prev_End_cummax'] = protcod_4_int.groupby("Gene_ID")['End_cummax'].shift()
+protcod_4_int['bool_new_contig'] = (protcod_4_int['prev_End_cummax'] <= protcod_4_int['Start'])
+protcod_4_int['Contig_nr'] = protcod_4_int.groupby("Gene_ID")['bool_new_contig'].cumsum()
+
+protcod_4_int = protcod_4_int.groupby(["Chr", "Strand", "Gene_ID", "Version", "Gene_name", "Source", "Contig_nr"], as_index=False).agg(Start=('Start', min), End=('End', max))
+
+protcod_5 = protcod_4_int[["Chr", "Start", "End" ,"Strand", "Gene_ID", "Version", "Gene_name", "Source"]].sort_values(["Chr", "Start"])
+
+```
+
+
+Genes sharing exons are examined. 
+```{r}
+py$protcod_5 %>% 
+  group_by(Chr, Start, End) %>%  
+  filter(n()==2) %>% 
+  arrange(Chr, Start) %>% 
+  ungroup() %>% 
+  select(Gene_ID, Gene_name, Source) %>% 
+  unique()
+
+
+py$protcod_5 %>% 
+  group_by(Chr, Start, End) %>%  
+  filter(n()>2) %>% 
+  arrange(Chr, Start) %>% 
+  ungroup() %>% 
+  select(Gene_ID, Gene_name, Source) %>% 
+  unique()
+```
+
+It turns out most of exon overlap across genes is due to genes with MGI, Riken or absent naming. These represent polycistronic transcripts or should be seen as an isoform of an existing gene. To remedy, overlapping exons from different genes are deleted if the exon belongs to MGI, Riken or absent naming.
+
+The origin of the name is included and exons are given a unique_name
+```{r}
+protcod_6<-py$protcod_5 %>% 
+  mutate(Name_origin="Symbol") %>% 
+  mutate(Name_origin=ifelse(grepl("^ENSMUS", Gene_name), "no_name", Name_origin)) %>%
+  mutate(Name_origin=ifelse(grepl("[0-9]Rik$", Gene_name), "Riken", Name_origin)) %>%
+  mutate(Name_origin=ifelse(grepl("^Gm[0-9]", Gene_name), "MGI", Name_origin)) %>% 
+  mutate(Name_origin=ifelse(grepl("^Gm[0-9][a-zA-Z]", Gene_name), "Symbol", Name_origin)) 
+
+protcod_7<-protcod_6 %>% 
+  arrange(Chr, Start) %>% 
+  group_by(Gene_ID) %>% 
+  mutate(Ex_num=ifelse(Strand=="+", 1:n(), rev(1:n()))) %>% 
+  mutate(Feature_name = paste(Gene_ID, Gene_name, paste("exon", Ex_num, sep=""), sep="_")) %>% 
+  ungroup()
+```
+
+Exons of MGI, Riken or unnamed genes that overlap with at least another gene (regardless of name) are discarded.  
+```{python}
+protcod_7_int = r.protcod_7.sort_values(["Chr", "Start"])
+
+protcod_7_int['End_cummax'] =  protcod_7_int.groupby("Chr")['End'].cummax()
+
+protcod_7_int['prev_End_cummax'] = protcod_7_int.groupby("Chr")['End_cummax'].shift()
+protcod_7_int['bool_new_contig'] = (protcod_7_int['prev_End_cummax'] <= protcod_7_int['Start'])
+protcod_7_int['Contig_nr'] = protcod_7_int.groupby("Chr")['bool_new_contig'].cumsum()
+
+```
+
+The exons overlapping with at least one other exon are identified. A list of the Riken/MGI/unnamed overlapping exons is made and they are removed 
+```{r}
+Deprecated_NonSymbol_exons<-py$protcod_7_int %>% 
+  group_by(Chr, Contig_nr) %>% 
+  filter(n()>1) %>% 
+  filter(Name_origin!="Symbol") %>% 
+  `$`(Feature_name)
+
+protcod_8<-protcod_7 %>% 
+  filter(!Feature_name %in% Deprecated_NonSymbol_exons) %>% 
+  select(Chr, Start, End, Strand, Feature_name, Gene_ID, Version, Gene_name, Source, Ex_num)
+
+protcod_8$Chr %>% unique()
+```
+
+The exons are reordered by exon_number, then the genes are reordered by position on chromosomes. Chromosomes are rordered manually. 
+```{r}
+Chromosomes<-c(as.character(1:19), "X", "Y", "MT", "GL456210.1", "GL456211.1", "GL456212.1", "GL456219.1", "GL456221.1", "GL456354.1", "JH584295.1", "JH584296.1", "JH584297.1", "JH584298.1", "JH584299.1", "JH584303.1", "JH584304.1", "EGFP", "mCherry", "mKate2", "SV40", "tGFP")
+
+
+Gene_order<-protcod_8 %>% 
+  group_by(Gene_ID) %>% 
+  slice_head(n=1) %>% 
+  arrange(factor(Chr, levels = Chromosomes), Start)%>%
+  select(Gene_ID) %>%
+  ungroup() %>% 
+  mutate(Gene_order=1:nrow(.))
+
+protcod_9<-protcod_8 %>% 
+  left_join(Gene_order, by="Gene_ID")  %>% 
+  arrange(Gene_order, Start) 
+```
+
+
+# Bedfile and GTF file
+A bedfile is made containing exons
+```{r}
+Musmu_GRCm39.109_protcod_fd.bed<-protcod_9 %>% 
+  mutate(Score = ".") %>% 
+  select(Chr, Start, End, Feature_name, Score, Strand)
+  
+
+write.table(Musmu_GRCm39.109_protcod_fd.bed, "Musmu_GRCm39.109_protcod_fd.bed", col.names = FALSE, sep = "\t", quote = FALSE, row.names = FALSE)
+```
+
+A GTF file is made
+```{r}
+protcod_10<-protcod_9 %>% 
+  arrange(Gene_order, Ex_num) %>% 
+  mutate(Score=".", Frame=".") %>% 
+  select(Chr, Source, Start, End, Score, Strand, Frame, Gene_ID, Version, Gene_name, Ex_num) %>% 
+  mutate(Transcript_id=paste("ST", Gene_ID, sep="_"), Transcript_name=paste("ST", Gene_name, sep="_")) %>% 
+  group_by(Gene_ID) %>% 
+  mutate(Gene_start=min(Start), Gene_end=max(End))
+```
+
+```{python}
+protcod_10 = r.protcod_10
+
+protcod_10["Same_gene_as_prev"] = protcod_10["Gene_ID"]!=protcod_10["Gene_ID"].shift()
+
+protcod_10_list = protcod_10.values.tolist()
+
+open("Musmu_GRCm39.109_protcod_fd.gtf", "w").close()
+with open("Musmu_GRCm39.109_protcod_fd.gtf", "a+") as f:
+    for item in protcod_10_list:
+        Chr = item[0]
+        Source = item[1]
+        Start = str(int(item[2]))
+        End = str(int(item[3]))
+        Strand = item[5]
+        Gene_ID = item[7]
+        Version = str(int(item[8]))
+        Gene_name = item[9]
+        Ex_num = str(int(item[10]))
+        TX_ID = item[11]
+        TX_name = item[12]
+        Gene_start = str(int(item[13]))
+        Gene_end = str(int(item[14]))
+    
+        if item[15]==True:
+            _=f.write(Chr+"\t"+Source+"\t"+"gene"+"\t"+Gene_start+"\t"+Gene_end+"\t"+"."+"\t"+Strand+"\t"+"."+"\t"+"gene_id \""+Gene_ID+"\"; "+"gene_version \""+Version+"\"; "+"gene_name \""+Gene_name+"\";\n")
+            _=f.write(Chr+"\t"+Source+"\t"+"transcript"+"\t"+Gene_start+"\t"+Gene_end+"\t"+"."+"\t"+Strand+"\t"+"."+"\t"+"gene_id \""+Gene_ID+"\"; "+"gene_version \""+Version+"\"; "+"transcript_id \""+TX_ID+"\"; "+"gene_name \""+Gene_name+"\"; "+"transcript_name \""+TX_name+"\";\n")
+            _=f.write(Chr+"\t"+Source+"\t"+"exon"+"\t"+Start+"\t"+End+"\t"+"."+"\t"+Strand+"\t"+"."+"\t"+"gene_id \""+Gene_ID+"\"; "+"gene_version \""+Version+"\"; "+"transcript_id \""+TX_ID+"\"; "+"gene_name \""+Gene_name+"\"; "+"exon_number \""+Ex_num+"\"; "+"transcript_name \""+TX_name+"\";\n")
+        else:
+            _=f.write(Chr+"\t"+Source+"\t"+"exon"+"\t"+Start+"\t"+End+"\t"+"."+"\t"+Strand+"\t"+"."+"\t"+"gene_id \""+Gene_ID+"\"; "+"gene_version \""+Version+"\"; "+"transcript_id \""+TX_ID+"\"; "+"gene_name \""+Gene_name+"\"; "+"exon_number \""+Ex_num+"\"; "+"transcript_name \""+TX_name+"\";\n")
+            
+f.close()
+            
+```
+
+
+# Exon-intron annotation
+A bed file with both exons and introns is made from the exon bed file
+```{python}
+import pandas as pd
+
+Musmu_bed = pd.read_csv("Musmu_GRCm39.109_protcod_fd.bed", sep="\t", names=["Chrom", "Start", "End", "EnsID_GeneName_ExonNr", "Score", "Strand"])
+
+Musmu_bed["Chrom"]=Musmu_bed["Chrom"].astype(str)
+
+Musmu_exon_df = Musmu_bed.copy()
+
+Musmu_exon_df[["EnsID", "Gene", "Exon"]]=Musmu_exon_df["EnsID_GeneName_ExonNr"].str.split("_", expand=True)
+
+Musmu_exon_df = Musmu_exon_df.drop(columns=["EnsID_GeneName_ExonNr", "Score", "EnsID"])
+```
+
+Start and end coordinate of the following intron is calculated for each exon. 
+```{python}
+Musmu_exintron_df = Musmu_exon_df.copy()
+Musmu_exintron_df["Starti"] = Musmu_exintron_df["End"]+1
+Musmu_exintron_df["Endi"] = Musmu_exintron_df["Start"].tolist()[1:]+[float("nan")]
+Musmu_exintron_df["Endi"] = Musmu_exintron_df["Endi"]-1
+```
+
+The intron number is calculated as exon_nr - 1 if on "-" strand, as exon_nr if on "+" strand.
+```{python}
+Musmu_exintron_df["Exon"] = Musmu_exintron_df["Exon"].str.replace("exon", "").astype(int)
+
+def make_intron(row):
+    if row["Strand"] == "+":
+        return row["Exon"]
+    elif row["Strand"] == "-":
+        return row["Exon"]-1
+
+Musmu_exintron_df["Intron"] = Musmu_exintron_df.apply(lambda x: make_intron(x), axis=1)
+```
+
+In case the exon is the last of the gene, the intron coordinates and the intron number are changed to NA
+```{python}
+Musmu_exintron_df.loc[Musmu_exintron_df.groupby("Gene").End.idxmax(), ['Starti', 'Endi', 'Intron']] = pd.NA
+```
+
+Two separate dataframes are made for exons and for introns, then the two dataframes are merged
+```{python}
+Musmu_exon_df = Musmu_exon_df.rename(columns={"Exon":"Feature"})
+Musmu_exon_df["Feature_type"] = "exon"
+
+Musmu_intron_df = Musmu_exintron_df[["Chrom", "Starti", "Endi", "Strand", "Gene", "Intron"]]
+Musmu_intron_df = Musmu_intron_df.dropna()
+Musmu_intron_df = Musmu_intron_df.rename(columns={"Starti":"Start", "Endi":"End", "Intron":"Feature"})
+Musmu_intron_df["Feature"] = "intron" + Musmu_intron_df["Feature"].astype(int).astype(str) 
+Musmu_intron_df["Feature_type"] = "intron"
+
+Chroms = Musmu_exon_df["Chrom"].unique().tolist()
+Chrom_order_dict = dict(map(lambda i,j : (i,j) , Chroms, list(range(len(Chroms)))))
+
+Musmu_feature_df = pd.concat([Musmu_exon_df, Musmu_intron_df]).sort_values(by=["Chrom", "Start"], key=lambda x: x.map(Chrom_order_dict).fillna(x))
+```
+
+A bed file with both exons and introns is made
+```{python}
+Musmu_feature_bed = Musmu_feature_df.drop(columns=["Feature_type"])
+Musmu_feature_bed["Score"] = "."
+Musmu_feature_bed["Feature"] = Musmu_feature_bed["Gene"] + "_" + Musmu_feature_bed["Feature"]
+Musmu_feature_bed = Musmu_feature_bed[["Chrom", "Start", "End", "Feature", "Score", "Strand"]]
+```
+
+Introns with length lower than 1bp are removed
+```{python}
+Musmu_feature_bed = Musmu_feature_bed[(Musmu_feature_bed["End"]-Musmu_feature_bed["Start"])>0]
+
+Musmu_feature_bed.to_csv(path_or_buf="Musmu_GRCm39.109_protcod_fd_ExonIntron.bed", sep="\t", header=False, index=False)
+```
+
+
+# Gene_metadata
+The per-gene total_exon_size is calculated and a gene metadata table is made
+```{r}
+Gene_md<-protcod_9 %>% 
+  mutate(Ex_length=End-Start+1) %>% 
+  group_by(Gene_ID, Gene_name, Version, Chr, Strand, Source, Gene_order) %>% 
+  summarize(Exon_count=max(Ex_num), Start = min(Start), End=max(End), Tot_exon_length=sum(Ex_length)) %>% 
+  ungroup() %>% 
+  arrange(Gene_order) %>% 
+  select(Gene_ID, Gene_name, Tot_exon_length, Exon_count, Chr, Start, End, Strand, Version, Source)
+
+write.table(Gene_md, "Musmu_GRCm39.109_protcod_fd_Gene_md.txt", col.names = FALSE, sep = "\t", quote = FALSE, row.names = FALSE)
+```
+
+
+# STAR mappable genome
+A STAR-mappable genome is made using the full GTF. foreign DNA are included. 
+```{bash}
+#!/bin/bash -l
+
+#SBATCH -A NAISS2023-22-1275
+#SBATCH -p node -n 20
+#SBATCH -t 06:00:00
+#SBATCH -J mappable_genome
+
+# use as sbatch Make_STAR_mappable_genome.sh <genome.fas> <inannot.gtf> <outdir_name>
+
+cp ${1} $SNIC_TMP/infas
+cp ${2} $SNIC_TMP/ingtf
+
+pwd=$(pwd)
+
+cd $SNIC_TMP
+
+module load bioinfo-tools
+module load star/2.7.11a
+
+STAR --runMode genomeGenerate --runThreadN 20 --limitGenomeGenerateRAM 100000000000 --genomeDir $3 --genomeFastaFiles infas --genomeSAindexNbases 4 --sjdbGTFfile ingtf --sjdbOverhang 75
+
+cp -r ${3} $pwd
+```
+
+```{bash}
+sbatch Make_STAR_mappable_genome.sh Musmu_GRCm39_primary_fd.fas Musmu_GRCm39.109_fd.gtf Musmu_mappable_genome_CP_27Mar2024
+```
+
+
+# Cell ranger mappable genome
+Make_10x_genome.sh
+```{bash}
+#!/bin/bash -l
+
+#SBATCH -A NAISS2023-22-1118
+#SBATCH -p node -n 20
+#SBATCH -t 06:00:00
+#SBATCH -J 10x_genome
+
+#run as sbatch Make_10x_genome.sh <genome.fas> <annotation.gtf>
+
+# copies the necessary files to scratch
+cp ${1}  $SNIC_TMP
+cp ${2}  $SNIC_TMP
+
+# takes note of the working directory
+pwd=$(pwd)
+
+# moves to scratch
+cd $SNIC_TMP
+
+# loads required modules
+module load bioinfo-tools
+module load cellranger
+
+# Runs cell ranger makeref
+cellranger mkref \
+--genome=Musmu_cellranger_ref_CP_12Dec2021 \
+--fasta=$1 \
+--genes=$2 \
+--nthreads=16
+
+# copies output files back to working directory
+cp -r Musmu_cellranger_ref_CP_12Dec2021 $pwd
+
+```
+
+```{bash}
+sbatch Make_10x_genome.sh Musmu_GRCm39_primary_fd.fas Musmu_GRCm39.109_protcod_fd.gtf
+```
+
+
+# cDNA position table
+The goal is to generate a table with a key of the base-pair position on the cDNA and a translation to the position on the chromosome. 
+
+The bedfile is loaded and essential information is retained. 
+```{python}
+import pandas as pd
+
+musmu_109_bed=pd.read_table("Musmu_GRCm39.109_protcod_fd.bed", names=["Chrom", "Start", "End", "Feature", "Qual", "Strand"])
+musmu_109_bed["Chrom"]=musmu_109_bed["Chrom"].astype(str)
+musmu_109_bed[["EnsID", "Gene", "Exon"]]=musmu_109_bed['Feature'].str.split('_', expand=True)
+
+musmu_109_bed=musmu_109_bed.drop(columns=["Feature", "Qual", "EnsID"])
+```
+
+The exons are expanded to make a bed entry for each position. 
+```{python}
+bedlol=musmu_109_bed.values.tolist()
+
+list_of_pos=list() 
+for exon in bedlol:
+    Chrom=exon[0]
+    Start=exon[1]
+    End=exon[2]
+    Strand=exon[3]
+    Gene=exon[4]
+    Exon_nr=exon[5]
+    
+    for i in range(Start, End+1):
+        posinfo=[Chrom, i, Strand, Gene, Exon_nr]
+        list_of_pos.append(posinfo)
+
+posinfo_df=pd.DataFrame(list_of_pos, columns=["Chrom", "Pos", "Strand", "Gene", "Exon"])
+```
+
+The cDNA position is introduced
+```{python}
+posinfo_df["index"]=posinfo_df.index
+
+pos_df=posinfo_df[posinfo_df["Strand"]=="+"]
+pos_df["n"]=posinfo_df.groupby(by="Gene").cumcount().add(1)
+
+neg_df=posinfo_df[posinfo_df["Strand"]=="-"]
+neg_df=neg_df[::-1].reset_index(drop=True)
+neg_df["n"]=neg_df.groupby(by="Gene").cumcount().add(1)
+
+posinfo_df=pd.concat([pos_df, neg_df])
+posinfo_df=posinfo_df.sort_values(by=["index"])
+
+posinfo_df=posinfo_df.drop(columns=["index"])
+
+posinfo_df.to_csv("Musmu_GRCm39.109_protcod_fd_posinfo_table.txt", sep="\t", index=False)
+```
+
