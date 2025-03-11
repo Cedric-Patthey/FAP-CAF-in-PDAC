@@ -1,0 +1,69 @@
+Sample	Sort.Date	Experiment	Run	Lysis.Tube.Label	Biological.Replicate	Culture	Condition	Sorted.population	Tube_label_SMART_Seq	Cell_type	Drug	MHCII_status
+s1	10-Jun-22	ifCAF	A	1	mT4tGFP.PSC4mKate2	Mono	Ctrl	mKate+	1	PSC	DMSO	NA
+s2	10-Jun-22	ifCAF	A	2	mT4tGFP.PSC4mKate2	Mono	DMXAA 100uM	mKate+	2	PSC	DMXAA	NA
+s3	10-Jun-22	ifCAF	A	3	mT4tGFP.PSC4mKate2	Mono	Ctrl	tGFP	3	Tumour	DMSO	NA
+s4	10-Jun-22	ifCAF	A	4	mT4tGFP.PSC4mKate2	Mono	DMXAA 100uM	tGFP	4	Tumour	DMXAA	NA
+s5	10-Jun-22	ifCAF	A	5	mT4tGFP.PSC4mKate2	Co	Ctrl	mKate+	5	PSC	DMSO	NA
+s6	10-Jun-22	ifCAF	A	6	mT4tGFP.PSC4mKate2	Co	Ctrl	tGFP	6	Tumour	DMSO	NA
+s7	10-Jun-22	ifCAF	A	7	mT4tGFP.PSC4mKate2	Co	DMXAA 100uM	mKate+	7	PSC	DMXAA	NA
+s8	10-Jun-22	ifCAF	A	8	mT4tGFP.PSC4mKate2	Co	DMXAA 100uM	tGFP	8	Tumour	DMXAA	NA
+s9	10-Jun-22	ifCAF	A	1	mT3tGFP.PSC5mKate2	Mono	Ctrl	mKate+	9	PSC	DMSO	NA
+s10	10-Jun-22	ifCAF	A	2	mT3tGFP.PSC5mKate2	Mono	DMXAA 100uM	mKate+	10	PSC	DMXAA	NA
+s11	10-Jun-22	ifCAF	A	3	mT3tGFP.PSC5mKate2	Mono	Ctrl	tGFP	11	Tumour	DMSO	NA
+s12	10-Jun-22	ifCAF	A	4	mT3tGFP.PSC5mKate2	Mono	DMXAA 100uM	tGFP	12	Tumour	DMXAA	NA
+s13	10-Jun-22	ifCAF	A	5	mT3tGFP.PSC5mKate2	Co	Ctrl	mKate+	13	PSC	DMSO	NA
+s14	10-Jun-22	ifCAF	A	6	mT3tGFP.PSC5mKate2	Co	Ctrl	tGFP	14	Tumour	DMSO	NA
+s15	10-Jun-22	ifCAF	A	7	mT3tGFP.PSC5mKate2	Co	DMXAA 100uM	mKate+	15	PSC	DMXAA	NA
+s16	10-Jun-22	ifCAF	A	8	mT3tGFP.PSC5mKate2	Co	DMXAA 100uM	tGFP	16	Tumour	DMXAA	NA
+s17	10-Jun-22	ifCAF	B	1	mT4tGFP.PSC4mKate2	Mono	Ctrl	mKate+	17	PSC	DMSO	NA
+s18	10-Jun-22	ifCAF	B	2	mT4tGFP.PSC4mKate2	Mono	DMXAA 100uM	mKate+	18	PSC	DMXAA	NA
+s19	10-Jun-22	ifCAF	B	3	mT4tGFP.PSC4mKate2	Mono	Ctrl	tGFP	19	Tumour	DMSO	NA
+s20	10-Jun-22	ifCAF	B	4	mT4tGFP.PSC4mKate2	Mono	DMXAA 100uM	tGFP	20	Tumour	DMXAA	NA
+s21	10-Jun-22	ifCAF	B	5	mT4tGFP.PSC4mKate2	Co	Ctrl	mKate+	21	PSC	DMSO	NA
+s22	10-Jun-22	ifCAF	B	6	mT4tGFP.PSC4mKate2	Co	Ctrl	tGFP	22	Tumour	DMSO	NA
+s23	10-Jun-22	ifCAF	B	7	mT4tGFP.PSC4mKate2	Co	DMXAA 100uM	mKate+	23	PSC	DMXAA	NA
+s24	10-Jun-22	ifCAF	B	8	mT4tGFP.PSC4mKate2	Co	DMXAA 100uM	tGFP	24	Tumour	DMXAA	NA
+s25	10-Jun-22	ifCAF	B	1	mT3tGFP.PSC5mKate2	Mono	Ctrl	mKate+	25	PSC	DMSO	NA
+s26	10-Jun-22	ifCAF	B	2	mT3tGFP.PSC5mKate2	Mono	DMXAA 100uM	mKate+	26	PSC	DMXAA	NA
+s27	10-Jun-22	ifCAF	B	3	mT3tGFP.PSC5mKate2	Mono	Ctrl	tGFP	27	Tumour	DMSO	NA
+s28	10-Jun-22	ifCAF	B	4	mT3tGFP.PSC5mKate2	Mono	DMXAA 100uM	tGFP	28	Tumour	DMXAA	NA
+s29	10-Jun-22	ifCAF	B	5	mT3tGFP.PSC5mKate2	Co	Ctrl	mKate+	29	PSC	DMSO	NA
+s30	10-Jun-22	ifCAF	B	6	mT3tGFP.PSC5mKate2	Co	Ctrl	tGFP	30	Tumour	DMSO	NA
+s31	10-Jun-22	ifCAF	B	7	mT3tGFP.PSC5mKate2	Co	DMXAA 100uM	mKate+	31	PSC	DMXAA	NA
+s32	10-Jun-22	ifCAF	B	8	mT3tGFP.PSC5mKate2	Co	DMXAA 100uM	tGFP	32	Tumour	DMXAA	NA
+s33	12-May-22	apCAF	A	1	mT4tGFP.PSC4mKate2	Mono	Ctrl	mKate+ MHCII-	1	PSC	Ctrl	MHCII_Negative
+s34	12-May-22	apCAF	A	2	mT4tGFP.PSC4mKate2	Mono	IFNy 10ng/ml 96hr	mKate+ MHCII+	2	PSC	IFNg_96hr	MHCII_Positive
+s35	12-May-22	apCAF	A	3	mT4tGFP.PSC4mKate2	Co	Ctrl	mKate+ MHCII-	3	PSC	Ctrl	MHCII_Negative
+s36	12-May-22	apCAF	A	4	mT4tGFP.PSC4mKate2	Co	IFNy 10ng/ml	mKate+ MHCII-	4	PSC	IFNg	MHCII_Negative
+s37	12-May-22	apCAF	A	5	mT4tGFP.PSC4mKate2	Co	IFNy 10ng/ml	mKate+ MHCII+	5	PSC	IFNg	MHCII_Positive
+s38	12-May-22	apCAF	A	6	mT4tGFP.PSC4mKate2	Co	IFNy 10ng/ml 96hr	mKate+ MHCII-	6	PSC	IFNg_96hr	MHCII_Negative
+s39	12-May-22	apCAF	A	7	mT4tGFP.PSC4mKate2	Co	IFNy 10ng/ml 96hr	mKate+ MHCII+	7	PSC	IFNg_96hr	MHCII_Positive
+s40	12-May-22	apCAF	A	1	mT3tGFP.PSC5mKate2	Mono	Ctrl	mKate+ MHCII-	8	PSC	Ctrl	MHCII_Negative
+s41	12-May-22	apCAF	A	2	mT3tGFP.PSC5mKate2	Mono	IFNy 10ng/ml 96hr	mKate+ MHCII+	9	PSC	IFNg_96hr	MHCII_Positive
+s42	12-May-22	apCAF	A	3	mT3tGFP.PSC5mKate2	Co	Ctrl	mKate+ MHCII-	10	PSC	Ctrl	MHCII_Negative
+s43	12-May-22	apCAF	A	4	mT3tGFP.PSC5mKate2	Co	IFNy 10ng/ml	mKate+ MHCII-	11	PSC	IFNg	MHCII_Negative
+s44	12-May-22	apCAF	A	5	mT3tGFP.PSC5mKate2	Co	IFNy 10ng/ml	mKate+ MHCII+	12	PSC	IFNg	MHCII_Positive
+s45	12-May-22	apCAF	A	6	mT3tGFP.PSC5mKate2	Co	IFNy 10ng/ml 96hr	mKate+ MHCII-	13	PSC	IFNg_96hr	MHCII_Negative
+s46	12-May-22	apCAF	A	7	mT3tGFP.PSC5mKate2	Co	IFNy 10ng/ml 96hr	mKate+ MHCII+	14	PSC	IFNg_96hr	MHCII_Positive
+s47	12-May-22	apCAF	B	1	mT4tGFP.PSC4mKate2	Mono	Ctrl	mKate+ MHCII-	15	PSC	Ctrl	MHCII_Negative
+s48	12-May-22	apCAF	B	2	mT4tGFP.PSC4mKate2	Mono	IFNy 10ng/ml 96hr	mKate+ MHCII+	16	PSC	IFNg_96hr	MHCII_Positive
+s49	12-May-22	apCAF	B	3	mT4tGFP.PSC4mKate2	Co	Ctrl	mKate+ MHCII-	17	PSC	Ctrl	MHCII_Negative
+s50	12-May-22	apCAF	B	4	mT4tGFP.PSC4mKate2	Co	IFNy 10ng/ml	mKate+ MHCII-	18	PSC	IFNg	MHCII_Negative
+s51	12-May-22	apCAF	B	5	mT4tGFP.PSC4mKate2	Co	IFNy 10ng/ml	mKate+ MHCII+	19	PSC	IFNg	MHCII_Positive
+s52	12-May-22	apCAF	B	6	mT4tGFP.PSC4mKate2	Co	IFNy 10ng/ml 96hr	mKate+ MHCII-	20	PSC	IFNg_96hr	MHCII_Negative
+s53	12-May-22	apCAF	B	7	mT4tGFP.PSC4mKate2	Co	IFNy 10ng/ml 96hr	mKate+ MHCII+	21	PSC	IFNg_96hr	MHCII_Positive
+s54	12-May-22	apCAF	B	1	mT3tGFP.PSC5mKate2	Mono	Ctrl	mKate+ MHCII-	22	PSC	Ctrl	MHCII_Negative
+s55	12-May-22	apCAF	B	2	mT3tGFP.PSC5mKate2	Mono	IFNy 10ng/ml 96hr	mKate+ MHCII+	23	PSC	IFNg_96hr	MHCII_Positive
+s56	12-May-22	apCAF	B	3	mT3tGFP.PSC5mKate2	Co	Ctrl	mKate+ MHCII-	24	PSC	Ctrl	MHCII_Negative
+s57	12-May-22	apCAF	B	4	mT3tGFP.PSC5mKate2	Co	IFNy 10ng/ml	mKate+ MHCII-	25	PSC	IFNg	MHCII_Negative
+s58	12-May-22	apCAF	B	5	mT3tGFP.PSC5mKate2	Co	IFNy 10ng/ml	mKate+ MHCII+	26	PSC	IFNg	MHCII_Positive
+s59	12-May-22	apCAF	B	6	mT3tGFP.PSC5mKate2	Co	IFNy 10ng/ml 96hr	mKate+ MHCII-	27	PSC	IFNg_96hr	MHCII_Negative
+s60	12-May-22	apCAF	B	7	mT3tGFP.PSC5mKate2	Co	IFNy 10ng/ml 96hr	mKate+ MHCII+	28	PSC	IFNg_96hr	MHCII_Positive
+s61	NA	apCAF	C	1	PSC4mKate2	Mono	T_Cells	mKate2+MHCII-	29	PSC	Ctrl	MHCII_Negative
+s62	NA	apCAF	C	2	PSC4mKate2	Mono	T_Cells	mKate2+MHCII+	30	PSC	T-Cells	MHCII_Positive
+s63	NA	apCAF	C	1	PSC5mKate2	Mono	T_Cells	mKate2+MHCII-	31	PSC	Ctrl	MHCII_Negative
+s64	NA	apCAF	C	2	PSC5mKate2	Mono	T_Cells	mKate2+MHCII+	32	PSC	T-Cells	MHCII_Positive
+s65	NA	apCAF	D	1	PSC4mKate2	Mono	T_Cells	mKate2+MHCII-	33	PSC	Ctrl	MHCII_Negative
+s66	NA	apCAF	D	2	PSC4mKate2	Mono	T_Cells	mKate2+MHCII+	34	PSC	T-Cells	MHCII_Positive
+s67	NA	apCAF	D	1	PSC5mKate2	Mono	T_Cells	mKate2+MHCII-	35	PSC	Ctrl	MHCII_Negative
+s68	NA	apCAF	D	2	PSC5mKate2	Mono	T_Cells	mKate2+MHCII+	36	PSC	T-Cells	MHCII_Positive
