@@ -1,0 +1,1247 @@
+---
+title: "FAP.Mesenchymal.6S.Souped.Singlets.rPCA.Integrated"
+author: "Joshua"
+date: '2022-11-17'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Summary
+The following code describes the analysis of single cell RNAseq data from 6 human PDAC samples. This code was used to produce figures 1, S1, S2 and S3 of Cumming et al, 2025. 
+
+The generation of the Seurat objects `FAP.Mesenchymal.Souped.Singlets.rPCA.integrated.RDS` and `CAFs.rPCA.integrated.RDS` used as input in the present code is described in R markdown `Figure_1_&_2_Pre_Processing.Rmd`. The files are available on SND at https://doi.org/10.5878/0ehq-1434.
+
+The generation of Seurat objects `Olaniru.Developing.Panc.Mesenchymal.SO.integrated.RDS` and `Peng.Peng.Mesenchymal.Cells.rPCA.integrated` from publically available datasets is described in R markdown `Figure_1_&_2_Pre_Processing.Rmd`.
+
+# Dependencies
+```{r}
+library(Seurat)  # version 4.1.0
+library(tidyverse)
+library(svglite)
+library(clustree)
+library(pheatmap)  # version 1.0.12
+library(RColorBrewer)
+library(enrichR)
+library(SCPA)  # version 1.5.3
+library(msigdbr)  # version 7.5.1
+library(Matrix)
+library(usefun)
+library(stringr)
+library(forcats)
+library(enrichplot)
+library(SeuratWrappers)
+library(cowplot)
+library(dittoSeq)
+```
+
+
+```{r}
+FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated <- readRDS("FAP.Mesenchymal.Souped.Singlets.rPCA.integrated.RDS")
+```
+
+# Figure 1B
+```{r}
+Fig_1B_plot <- DimPlot(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, reduction = "umap", label = T, pt.size = 1) + NoLegend()
+
+if (!dir.exists("Figure_1")) {dir.create("Figure_1")}
+ggsave(plot = Fig_1B_plot, "Figure_1B_UMAP.pdf", width = 7.5, height = 4.4444444, units = "in", path = "Figure_1/")
+```
+
+```{r}
+Cluster.0.Markers <- FindMarkers(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, ident.1 = c("0"), min.pct = 0.25, logfc.threshold = 0.585, only.pos = T, assay = "RNA")
+Cluster.0.Markers <- Cluster.0.Markers %>%
+  filter(p_val_adj < 0.05)
+Cluster.1.Markers <- FindMarkers(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, ident.1 = c("1"), min.pct = 0.25, logfc.threshold = 0.585, only.pos = T, assay = "RNA")
+Cluster.1.Markers <- Cluster.1.Markers %>%
+  filter(p_val_adj < 0.05)
+Cluster.2.Markers <- FindMarkers(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, ident.1 = c("2"), min.pct = 0.25, logfc.threshold = 0.585, only.pos = T, assay = "RNA")
+Cluster.2.Markers <- Cluster.2.Markers %>%
+  filter(p_val_adj < 0.05)
+Cluster.3.Markers <- FindMarkers(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, ident.1 = c("3"), min.pct = 0.25, logfc.threshold = 0.585, only.pos = T, assay = "RNA")
+Cluster.3.Markers <- Cluster.3.Markers %>%
+  filter(p_val_adj < 0.05)
+Cluster.4.Markers <- FindMarkers(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, ident.1 = c("4"), min.pct = 0.25, logfc.threshold = 0.585, only.pos = T, assay = "RNA")
+Cluster.4.Markers <- Cluster.4.Markers %>%
+  filter(p_val_adj < 0.05)
+```
+
+```{r}
+FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data <- FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data %>%
+  mutate(Annotation = case_when(
+    integrated_snn_res.0.1 == "0" ~ "ENG+ CAFs",
+    integrated_snn_res.0.1 == "1" ~ "WT1+ CAFs",
+    integrated_snn_res.0.1 == "2" ~ "LRRC15+ CAFs",
+    integrated_snn_res.0.1 == "3" ~ "CAPs",
+    integrated_snn_res.0.1 == "4" ~ "Proliferating cells"
+  ))
+```
+
+# Figure 1C
+```{r}
+Fig_1C_plot <- VlnPlot(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, features =  c("LUM", "DCN", "COL1A1", "RGS5", "MCAM", "NOTCH3", "TOP2A", "MKI67"), assay = "RNA", pt.size = 0, stack = T, flip = T, fill.by = "ident") + NoLegend()
+
+if (!dir.exists("Figure_1")) {dir.create("Figure_1")}
+ggsave(plot = Fig_1C_plot, "Figure_1C_Stacked_VLN_CAP_CAF_Pro.pdf", width = 3.75, height = 4.4444444, units = "in", path = "Figure_1/")
+```
+
+#Read Pathways for GSEA
+```{r}
+hall_mark_pathways <- msigdbr("Homo sapiens", "H")
+reactome_pathways <- msigdbr(species = "human", category = "C2", subcategory = "CP:REACTOME")
+kegg_pathways <- msigdbr(species = "human", category = "C2", subcategory = "CP:KEGG")
+
+pathways <- rbind(hall_mark_pathways, reactome_pathways, kegg_pathways) %>%
+  format_pathways()
+```
+
+#GSEA CAF vs CAP
+```{r}
+FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data <- FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data %>%
+  mutate(CAF.vs.CAP.GSEA = case_when(
+    integrated_snn_res.0.1 == 0 ~ "CAF",
+    integrated_snn_res.0.1 == 1 ~ "CAF",
+    integrated_snn_res.0.1 == 2 ~ "CAF",
+    integrated_snn_res.0.1 == 3 ~ "CAP",
+    integrated_snn_res.0.1 == 4 ~ "Other")
+  )
+```
+
+```{r}
+scpa_out_CAFs.v.CAPs <- compare_seurat(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated,
+                           group1 = "CAF.vs.CAP.GSEA", 
+                           group1_population = c("CAF", "CAP"),
+                           pathways = pathways)
+
+write.table(scpa_out_CAFs.v.CAPs, "scpa_out_CAFs.v.CAPs.txt", sep = "\t")
+
+scpa_out_CAFs.v.CAPs <- read.table("scpa_out_CAFs.v.CAPs.txt")
+
+scpa_out_CAF_enriched <- scpa_out_CAFs.v.CAPs %>%
+  filter(FC > 0 & adjPval < 0.05) 
+
+scpa_out_CAP_enriched <- scpa_out_CAFs.v.CAPs %>%
+  filter(FC < 0 & adjPval < 0.05) 
+
+top_scpa_out_CAF_enriched <- scpa_out_CAFs.v.CAPs %>%
+  filter(FC > 0) %>%
+  top_n(20, (qval + FC)) %>% 
+  mutate(Subtype = "CAFs")
+
+top_scpa_out_CAP_enriched <- scpa_out_CAFs.v.CAPs %>%
+  filter(FC < 0) %>%
+  top_n(20, (qval - FC)) %>% 
+  mutate(Subtype = "CAPs")
+
+Selected.Pathways <- c("REACTOME_EXTRACELLULAR_MATRIX_ORGANIZATION", "HALLMARK_COAGULATION", "REACTOME_ECM_PROTEOGLYCANS", "REACTOME_DEGRADATION_OF_THE_EXTRACELLULAR_MATRIX", "REACTOME_COLLAGEN_DEGRADATION", "REACTOME_SIGNALING_BY_NOTCH", "REACTOME_RHO_GTPASE_EFFECTORS", "KEGG_REGULATION_OF_ACTIN_CYTOSKELETON", "KEGG_VASCULAR_SMOOTH_MUSCLE_CONTRACTION", "REACTOME_SMOOTH_MUSCLE_CONTRACTION")
+
+Selected.scpa_out_CAFs.v.CAPs <- scpa_out_CAFs.v.CAPs %>%
+  filter(Pathway %in% Selected.Pathways) %>%
+  mutate(Subtype = case_when(
+  FC > 0 ~ "CAFs",
+  FC < 0 ~ "CAPs"
+  ))
+
+Selected.scpa_out_CAFs.v.CAPs <- Selected.scpa_out_CAFs.v.CAPs %>%
+  arrange(Subtype, desc(FC)) %>%
+  mutate(Pathway = gsub("_", " ", Pathway))
+```
+
+# Figure 1D
+```{r}
+Fig_1D_plot <- ggplot(Selected.scpa_out_CAFs.v.CAPs, aes(x = Subtype, y = fct_reorder(Pathway, Subtype))) + 
+               geom_point(aes(color = qval, size = abs(FC))) +
+               theme_bw(base_size =6) +
+        scale_colour_gradient(limits=c(0, 10), low="grey", high = "red") +
+        #scale_size(range = c(2,8)) +
+        ylab(NULL)   +
+  theme(axis.text.x = element_text(angle = 45, hjust=1, size = 10), title = element_text(size = 10), axis.text.y = element_text(size = 8), legend.text = element_text(size=8)) +
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 30))
+
+if (!dir.exists("Figure_1")) {dir.create("Figure_1")}
+ggsave(plot = Fig_1D_plot, "Figure_1D_CAP.vs.CAF.GSEA.pdf", width = 3.75, height = 4.4444444, units = "in", path = "Figure_1/")
+```
+
+#Function to make plots which show average gene signature Z-score for clusters in Seurat object for two gene signatures 
+```{r}
+plot_two_Zs_Cluster_Average<-function(in_sign1, in_sign2, plot_SO, x_lab_sign1_name="sign 1 Z score", y_lab_sign2_name="sign 2 Z score", title = "title", meta.data.clusters = "meta data clusters", xlim, ylim){
+  DefaultAssay(plot_SO) <- "RNA"
+  #verifies the genes are part of the seurat object
+  in_sign1<-in_sign1[in_sign1 %in% rownames(plot_SO)]
+  in_sign2<-in_sign2[in_sign2 %in% rownames(plot_SO)]
+  
+  # Genes which are 0 in >95% of cells are removed
+  long_NC_sig1 <- plot_SO@assays$RNA@data[in_sign1,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) %>% 
+    group_by(Gene) %>% 
+    summarise(prop_zeros = sum(NC == 0)/n()) %>% 
+    filter(prop_zeros <= 0.95) %>% 
+    select(-prop_zeros)
+    
+  # NC is extracted from the SO
+    long_NC_sig1 <- plot_SO@assays$RNA@data[long_NC_sig1$Gene,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) 
+  
+  #Repeat for sig 2
+    long_NC_sig2 <- plot_SO@assays$RNA@data[in_sign2,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) %>% 
+    group_by(Gene) %>% 
+    summarise(prop_zeros = sum(NC == 0)/n()) %>% 
+    filter(prop_zeros <= 0.95) %>% 
+    select(-prop_zeros)
+    
+    long_NC_sig2 <- plot_SO@assays$RNA@data[long_NC_sig2$Gene,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene)
+  
+  # Signature scores are calculated for each cell
+  cell_sign1_scores <- long_NC_sig1 %>%
+    group_by(Gene) %>%  # added
+    mutate(Z = (NC - mean(NC)) / sd(NC)) %>% drop_na() %>% 
+    group_by(Cell) %>%
+    summarise(sign1_Z = mean(Z) %>% round(2))
+
+  cell_sign2_scores <- long_NC_sig2 %>%
+    group_by(Gene) %>%  # added
+    mutate(Z = (NC - mean(NC)) / sd(NC)) %>% drop_na() %>% 
+    group_by(Cell) %>%
+    summarise(sign2_Z = mean(Z) %>% round(2))
+  
+  Cluster.IDs <- plot_SO@meta.data %>%
+    select(meta.data.clusters) %>%
+    rename("Cluster" = meta.data.clusters) %>%
+    rownames_to_column("Cell")
+  
+  cluster_sign1_scores <- cell_sign1_scores %>%
+    left_join(Cluster.IDs, by = "Cell") %>%
+    group_by(Cluster) %>%
+    summarise(mean_sign1 = mean(sign1_Z),
+            sd_sign1 = sd(sign1_Z))
+  
+  cluster_sign2_scores <- cell_sign2_scores %>%
+    left_join(Cluster.IDs, by = "Cell") %>%
+    group_by(Cluster) %>%
+    summarise(mean_sign2 = mean(sign2_Z),
+            sd_sign2 = sd(sign2_Z))
+  
+  cluster_scores <- cluster_sign1_scores %>%
+    left_join(cluster_sign2_scores, by = "Cluster")
+  
+
+  
+  p <- ggplot(cluster_scores, aes(x = mean_sign1, y = mean_sign2, color = Cluster)) +
+  geom_point(size = 8) +
+  labs(x = x_lab_sign1_name, y = y_lab_sign2_name) +
+  ggtitle(title) +
+  geom_hline(yintercept=0) + 
+  geom_vline(xintercept=0) + 
+  xlim +
+  ylim +
+  theme_bw() + 
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),    
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(), plot.title = element_text(hjust = 0.5)) 
+  
+  
+  return(p)
+  
+}
+```
+
+```{r}
+Wang.fibroblast.like.CAFs.Signature <- c("MMP11", "FN1", "POSTN", "CTHRC1", "COL10A1", "COL11A1", "COL1A1", "COL1A2", "IGFL2", "INHBA", "IGFBP3", "RARRES2", "THBS2", "CST1", "MMP14", "SULF1", "CXCL14", "COL3A1", "VCAN", "AEBP1", "COL6A3", "HTRA1", "LGALS1", "COL5A2", "GJB2", "CTSK", "COL12A1", "RGS16", "SOX4", "LUM", "TMSB10", "C1QTNF3", "HOPX", "COL8A1", "APOD", "PTGDS", "C7", "C3", "MGP", "FBLN1", "C1S", "DCN", "C1R", "CST3", "GSN", "FBLN5", "SERPINF1", "SFRP2", "MFAP4", "TSHZ2", "MMP2", "SELENOP", "CYBRD1", "PRELP", "GPNMB", "SCN7A", "CYR61", "ALDH1A1", "SFRP4", "CTGF", "PLA2G2A", "CRABP2", "SERPINE2", "MFAP5", "EFEMP1", "RARRES1", "PI16", "RPL22L1", "S100A10", "TGFBI", "IGFBP6", "IGF1", "PRDX4", "CFD", "FKBP11", "ANGPTL4", "ANXA2", "RCN3", "TUBA1B", "SERPINH1", "NME1", "PPIB", "CCDC80", "KDELR2", "CCL11", "MYDGF", "P4HB", "KDELR3", "EEF1B2", "SPARC", "NNMT", "TIMP1", "NUCB2", "LOX", "HTRA3", "ENO1", "SRM", "SSR4", "RPSA", "COMP", "PTGS1", "COPZ2", "SH3BGRL3", "CKAP4", "SSR3", "TMED3", "RCN1", "MGST1", "TUBA1C", "LDHA", "OSTC", "PLIN2", "OLFML3", "LXN", "ELN", "YIF1A", "RPS2", "ETFB", "SSR2", "SEC61B", "SPON2", "TMED9", "UCHL1", "PLPP1", "ARF4", "FKBP10", "GSTP1", "TPI1", "JPT1", "PRDX6", "HSP90B1", "PTGIS", "PDIA6", "CERCAM", "PYCR1")
+
+  
+Wang.Stellate.like.CAFs.Signature <- c("ADIRF", "CRIP1", "MYH11", "DSTN", "SOD3", "PLN", "TAGLN", "MYL9", "MT1M", "TSC22D1", "RERGL", "CSRP2", "PHLDA2", "SPARCL1", "S100A4", "ACTA2", "RHOB", "C11orf96", "MT1X", "RASD1", "PDK4", "JUNB", "RGS5", "NDUFA4L2", "HIGD1B", "FABP4", "ARHGDIB", "COL4A1", "COX4I2", "NOTCH3", "PDGFRB", "IGFBP2", "COL18A1", "STEAP4", "MAP1B", "PPP1R14A", "COL4A2", "GJA4", "TPPP3")
+  
+Wu.CAFs.Signature <- c("DCN", "COL1A1", "LUM", "COL1A2", "SFRP2", "COL3A1", "APOD", "POSTN", "CTHRC1", "MMP11", "COL6A3", "CTGF", "CTSK", "C1S", "COL6A2", "FN1", "CCDC80", "SPARC", "RARRES2", "CXCL14", "COL6A1", "SFRP4", "AEBP1", "BGN", "PTGDS", "SERPINF1", "MMP2", "CFD", "TIMP1", "FBLN1", "VCAN", "C1R", "C3", "MFAP4", "CXCL12", "CYR61", "COL5A2", "MXRA8", "ISLR", "IGFBP4", "GSN", "SERPING1", "IGF2", "IGF1", "PCOLCE", "MEG3", "SPON2", "THY1", "CALD1", "IGFBP6", "MFAP2", "ASPN", "LGALS1", "DPT", "TIMP3", "THBS2", "FSTL1", "NNMT", "LRP1", "COL5A1", "HTRA1", "COL14A1", "COL12A1", "TIMP2", "FBLN2", "SRPX", "PDGFRL", "MXRA5", "OLFML3", "EFEMP1", "MMP14", "LAPTM4A", "GEM", "PPIC", "IGFBP7", "EGR1", "FBN1", "CD63", "PRRX1", "PMP22", "HTRA3", "TMEM176B", "TNFAIP6", "MDK", "CDH11", "COMP", "CLEC11A", "COL10A1", "FGF7", "PALLD", "EFEMP2", "MFAP5", "FBLN5", "CYP1B1", "SERPINH1", "LGALS3BP", "COL8A1", "PLPP3", "CFH", "CILP", "FAP", "RCN3", "PODN", "NBL1", "PRSS23", "ELN", "SULF1", "TMEM176A", "ID3", "LHFP", "COL11A1", "CST3", "CRISPLD2", "F2R", "IFITM3", "GPNMB", "ADAM12", "TCF4", "SOD3", "GGT5", "PLAC9", "CD99", "CD248", "SSPN", "CPE", "TAGLN", "INHBA", "ANTXR1", "SELM", "PDGFRB", "CERCAM", "ADH1B", "SERPINE2", "RASD1", "SERPINE1", "MRC2", "WISP2", "PI16", "OGN", "MAFB", "PRELP", "GPC3", "PDGFRA", "FXYD1", "EMILIN1", "NREP", "THBS1", "NR2F1", "TMEM98", "LOXL1", "TPM2", "LAMB1", "FKBP10", "SEPP1", "CNN3", "CALU", "NID1", "ITGBL1", "ITM2A", "PTRF", "COL16A1", "COL18A1", "SMOC2", "GLT8D2", "MGP", "WBP5", "PLTP", "RND3", "MYL9", "MFGE8", "LAMA2", "PLXDC2", "CPXM1", "PLXDC1", "TMEM119", "VIM", "Sep-11", "KCNQ1OT1", "FRZB", "NGFRAP1", "PPIB", "LAMA4", "TNXB", "TSPAN4", "CYBRD1", "ABCA6", "DPYSL3", "SGCE", "CCL2", "RGS16", "RUNX1T1", "COL15A1", "FIGF", "OLFML2B", "IGFBP3", "IFI27", "CRTAP", "IGFBP5", "CHPF", "EID1", "ANXA5", "TPM1", "ABCA8", "PLAU", "FILIP1L", "ITGB1", "ALDH1A1", "FGFR1", "ANGPTL2", "PRKCDBP", "DIO2", "AKAP12", "UACA", "LGALS3", "OSTC", "SVEP1", "ABI3BP", "CTSF", "ECM1", "LIMA1", "SPARCL1", "CD81", "TFPI", "TCF7L2", "THBS4", "LOX", "PLAGL1", "FMO1", "COL4A2", "SVIL", "SLIT3", "C10orf10", "S100A6", "GAS6", "RARRES1", "PDPN", "MARCKS", "LTBP4", "EMP1", "SCPEP1", "LTBP2", "PDLIM7", "GAS1", "ADD3", "RBMS3", "NUPR1", "GPX8", "SDC2", "BICC1", "ITGB5", "CPQ", "FIBIN", "RRBP1", "HSPB6", "TGFB1I1", "RAB34", "BOC", "S100A13", "ZFHX4", "MIR99AHG", "NFIC", "PLEKHH2", "LRRC17", "SDC1", "PPFIBP1", "CYB5R3", "RP11-14N7.2", "SPHK1", "IFI6", "C11orf96", "ADAMTS2", "COL4A1", "MMP23B", "PTN", "FKBP7", "PAM", "TPM4", "PTK7", "PHLDB1", "ADAMTS12", "FHL1", "ARF4", "FAM114A1", "RCN1", "RGMA", "WNT2", "MEIS2", "ANGPTL4", "FAM46A", "PCDH18", "SPRY1", "MAP1B", "ACTN1", "TUBA1A", "PDLIM2", "FRMD6", "ANXA2", "FAM127A", "HCFC1R1", "LEPROT", "SH3PXD2B", "FLNA", "COLEC12", "DDR2", "KDELR3", "LY6E", "OAF", "COX7A1", "TWIST2", "LAMC1", "VKORC1", "DLK1", "RAB31", "SPON1", "DKK3", "VCAM1", "DAB2", "PSAP", "ITM2B", "TPBG", "SPATS2L", "OMD", "RHOBTB3", "ZBTB20", "GOLIM4", "PARVA", "INAFM1", "GADD45B", "CLMP", "SPOCK1", "CTSL", "MMP19", "LOXL2", "HSPG2", "CD276", "SOX4", "DLC1", "MAP1A", "TMEM204", "BMP1", "GPM6B", "TGFB3", "LXN", "SH3PXD2A")
+
+Wu.PVLs.Signature <- c("ACTA2", "RGS5", "TAGLN", "MYL9", "NDUFA4L2", "TPM2", "IGFBP7", "CALD1", "SOD3", "CCL19", "ADIRF", "MT1M", "COL18A1", "SPARCL1", "CCL2", "C11orf96", "MYH11", "LHFP", "MFGE8", "PPP1R14A", "RERGL", "PLAC9", "IGFBP5", "NOTCH3", "PTP4A3", "CPE", "MCAM", "TINAGL1", "CAV1", "TPM1", "BGN", "MT1E", "FRZB", "GJA4", "PDGFRB", "TIMP3", "DSTN", "CSRP2", "MAP1B", "MYLK", "PRKCDBP", "MT2A", "COL4A2", "COX4I2", "SORBS2", "SPARC", "HIGD1B", "SERPING1", "MT1A", "ADAMTS1", "PLN", "GPX3", "TIMP1", "ID3", "COL4A1", "THY1", "IFITM3", "CCL21", "FILIP1L", "PGF", "PTRF", "A2M", "CRISPLD2", "RGS16", "MAP3K7CL", "CRYAB", "C1QTNF1", "NR2F2", "CSRP1", "TPPP3", "C2orf40", "ISYNA1", "EPS8", "STEAP4", "AC013461.1", "TGFB1I1", "PCOLCE", "LMOD1", "EGR1", "COL6A2", "TSC22D1", "JAG1", "RASD1", "FLNA", "NTRK2", "SMOC2", "MEF2C", "EPAS1", "MGST3", "C10orf10", "WFDC1", "EDNRA", "OAZ2", "PTK2", "ANGPTL4", "SERPINF1", "ADAMTS4", "MYC", "FHL1", "DKK3", "BCAM", "SDC2", "CNN3", "CDKN1A", "SYNPO2", "CAV2", "GUCY1B3", "CEBPD", "PHLDA2", "VIM", "SLIT3", "FXYD1", "GADD45B", "EHD2", "GUCY1A3", "CNN1", "PHLDA1", "PDK4", "HES4", "TBX2", "CCL8", "MYO1B", "TGFBI", "LPP", "PRRX1", "HSPB6", "SELM", "ITGB1", "GEM", "PDGFA", "LGALS1", "FAM162B", "C1R", "LBH", "EBF1", "LGI4", "TFPI", "NET1", "COL14A1", "MSRB3", "UACA", "ANGPT2", "KCNJ8", "RCAN2", "CD151", "ACTG2", "GGT5", "GSN", "RASL11A", "ENPEP", "CYB5R3", "CRIP2", "JUN", "CCDC102B", "OLFML2B", "PLXDC1", "PLS3", "SNCG", "COX7A1", "TNS1", "ITGA1", "IGFBP4", "PDLIM3", "RASL12", "CASQ2", "RBPMS", "SOCS3", "PPP1R12A", "MGLL", "NDRG2", "PKIG", "SERPINH1", "NUDT4", "GPRC5C", "ESAM", "ID4", "LGALS3BP", "UBA2", "S100A4", "YBX3", "CDH6", "STOM", "CHN1", "ILK", "EGFL6", "MRGPRF", "CD248", "SORBS3", "CD63", "CRTAP", "SERPINI1", "HCFC1R1", "ABCC9", "CARMN", "FOXS1", "OR51E1", "LAPTM4A", "EFHD1", "NNMT", "CD36", "PDLIM7", "FOS", "CD59", "KANK2", "INAFM1", "FABP4", "LAMA4", "GJC1", "COL6A1", "ATF3", "C1S", "ACTN1", "EGFLAM", "ACTN4", "ARHGAP29", "KCNE4", "SSTR2", "VASN", "MRVI1", "OLFML2A", "FILIP1", "ZFHX3", "EPHX1", "FBLIM1", "PARM1", "CALM2", "PALLD", "CD81", "ARPC5", "C9orf3", "DLC1", "HEYL", "MIR4435-2HG", "GAS6", "PPP1R12B", "ITGA7", "IFITM2", "LINC00152", "CYSTM1", "AOC3", "PDLIM1", "NEURL1B", "TBX2-AS1", "AXL", "CYR61", "TPM4", "AVPR1A", "EID1", "IL6", "RRAD", "RHOB", "FAM13C", "NR4A1", "PTMS", "CLMN", "ARPC1A", "NEXN", "ARHGEF17", "AEBP1", "CCDC3", "TUBA1A", "HSPB8", "C12orf57", "RBPMS2", "HES1", "MT1X", "VCL", "LAMB2", "FHL5", "CPM", "HSPB1", "TSPAN3", "PDE1A", "RERG", "MYH9", "ESD", "PMEPA1", "KLF9", "CSPG4", "FN1", "LAMC1", "FADS3", "RSU1", "PHLDB2", "TACC1", "KCNMB1", "NDN", "TLN1", "SGCE", "AKAP12", "PDE5A", "ADGRF5", "TCF4", "SMTN", "C20orf27", "FERMT2", "COL5A2", "ANGPT1", "PRKG1", "APOLD1", "COL5A3", "LEPROT", "SGCA", "HEY2", "RARRES2", "ATP1B2", "FOSB", "CFH", "RHOC", "ARHGAP10", "ANXA6", "ADCY3", "FXYD6", "LRRC32", "SBDS", "GPR4", "DDR2")
+```
+
+```{r}
+p1 <- plot_two_Zs_Cluster_Average(Wang.fibroblast.like.CAFs.Signature, Wang.Stellate.like.CAFs.Signature, FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, x_lab_sign1_name="Fibroblast-like CAF Signature Z-Score", y_lab_sign2_name="Stellate-like CAF Signature Z-Score", title = "Wang et al, 2021 - PDAC", meta.data.clusters = "integrated_snn_res.0.1", xlim = xlim(-0.75, 0.5), ylim = ylim(-0.5, 1.25)) + NoLegend()
+
+p2 <- plot_two_Zs_Cluster_Average(Wu.CAFs.Signature, Wu.PVLs.Signature, FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, x_lab_sign1_name="CAF Signature Z-Score", y_lab_sign2_name="PVL Signature Z-Score", title = "Wu et al, 2021 - Breast Cancer", meta.data.clusters = "integrated_snn_res.0.1", xlim = xlim(-0.5, 0.25), ylim = ylim(-0.25, 0.75)) + NoLegend()
+```
+
+# Figure 1E and 1F
+```{r}
+Fig_1EF_plot <- plot_grid(p1, p2, nrow = 1)
+
+if (!dir.exists("Figure_1")) {dir.create("Figure_1")}
+ggsave(plot = Fig_1EF_plot, "Figure_1E_F_Cluster_Sig_Scores_CAP_CAF.pdf", width = 7.5, height = 4.4444444, units = "in", path = "Figure_1/")
+```
+
+# Figure 1G
+```{r}
+Fig_1G_plot <- DotPlot(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, assay = "RNA", col.min = 0, features = c("ENG", "APOD", "SFRP4", "WT1", "PLA2G2A", "HAS2", "LRRC15", "COL11A1", "MMP11"), cols = c("white", "blue")) + theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+if (!dir.exists("Figure_1")) {dir.create("Figure_1")}
+ggsave(plot = Fig_1G_plot, "Figure_1G_Dotplot_CAF_Broad_markers.pdf", width = 7.5*0.8, height = 4.4444444, units = "in", path = "Figure_1/")
+```
+
+```{r}
+Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- readRDS("Olaniru.Developing.Panc.Mesenchymal.SO.integrated.RDS")
+```
+
+# Read in Normal Pancreas integrated object from Olaniru et al
+```{r}
+Norm.Panc.Cluster.0.markers <- FindMarkers(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, ident.1 = c("0"), min.pct = 0.25, logfc.threshold = 0.585, only.pos = T, assay = "RNA")
+Norm.Panc.Cluster.0.markers <- Norm.Panc.Cluster.0.markers %>%
+  filter(p_val_adj < 0.05)
+Norm.Panc.Cluster.1.markers <- FindMarkers(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, ident.1 = c("1"), min.pct = 0.25, logfc.threshold = 0.585, only.pos = T, assay = "RNA")
+Norm.Panc.Cluster.1.markers <- Norm.Panc.Cluster.1.markers %>%
+  filter(p_val_adj < 0.05)
+Norm.Panc.Cluster.2.markers <- FindMarkers(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, ident.1 = c("2"), min.pct = 0.25, logfc.threshold = 0.585, only.pos = T, assay = "RNA")
+Norm.Panc.Cluster.2.markers <- Norm.Panc.Cluster.2.markers %>%
+  filter(p_val_adj < 0.05)
+Norm.Panc.Cluster.3.markers <- FindMarkers(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, ident.1 = c("3"), min.pct = 0.25, logfc.threshold = 0.585, only.pos = T, assay = "RNA")
+Norm.Panc.Cluster.3.markers <- Norm.Panc.Cluster.3.markers %>%
+  filter(p_val_adj < 0.05)
+```
+
+# Label transfer integration normal and PDAC
+```{r}
+anchors <- FindTransferAnchors(reference = FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, query = Olaniru.Developing.Panc.Mesenchymal.SO.integrated, 
+    dims = 1:10, reference.reduction = "pca", normalization.method = "LogNormalize")
+
+Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- MapQuery(
+  anchorset = anchors,
+  query = Olaniru.Developing.Panc.Mesenchymal.SO.integrated,
+  reference = FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated,
+  refdata = list(Cell_type = "integrated_snn_res.0.1"), reference.reduction = "pca")
+```
+
+```{r}
+Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data <- Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data %>%
+  mutate(Cluster_labels = case_when(
+    integrated_snn_res.0.1 == 0 ~ "A",
+    integrated_snn_res.0.1 == 1 ~ "B",
+    integrated_snn_res.0.1 == 2 ~ "C",
+    integrated_snn_res.0.1 == 3 ~ "D",
+  ))
+
+pal <- c(RColorBrewer::brewer.pal(9, "Set1"), RColorBrewer::brewer.pal(8, "Set2"))
+p1 <- DimPlot(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, reduction = "umap", label = F, pt.size = 1, group.by = "Cluster_labels", cols = pal) + ggtitle("De Novo Clusters") + 
+  theme(plot.title = element_text(hjust = 0.5)) 
+p2 <- DimPlot(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, group.by = "predicted.Cell_type", pt.size = 1) + ggtitle("Predicted Identity") + 
+  theme(plot.title = element_text(hjust = 0.5)) 
+Cluster_predicted_id_props <-  Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data %>% 
+  group_by(Cluster_labels, predicted.Cell_type) %>% 
+  summarise(count=n()) %>% 
+  group_by(Cluster_labels) %>% 
+  mutate(prop=count/sum(count)) %>% 
+  ungroup()
+
+p3 <- ggplot(Cluster_predicted_id_props, aes(x=Cluster_labels, y=prop, fill=predicted.Cell_type)) +
+  geom_bar(stat="identity", position="stack") +
+  theme_bw() + 
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) + 
+    scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
+  xlab("Cluster") +
+  ylab("Proportion") + 
+  scale_fill_discrete(name = "Predicted Cluster ID")
+```
+
+# Figure 1I-K
+```{r}
+if (!dir.exists("Figure_1")) {dir.create("Figure_1")}
+ggsave(plot = p1, "Figure_1I_Olaniru_Label_transfer.pdf", width = 5, height = 4.4444444, units = "in", path = "Figure_1/")
+ggsave(plot = p2, "Figure_1J_Olaniru_Label_transfer.pdf", width = 5, height = 4.4444444, units = "in", path = "Figure_1/")
+ggsave(plot = p3, "Figure_1K_Olaniru_Label_transfer.pdf", width = 5, height = 4.4444444, units = "in", path = "Figure_1/")
+```
+
+# Figure S1A
+```{r}
+cells.order.random <- sample(Cells(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated))
+Fig_S1A_plot <- DimPlot(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, reduction = "umap", label = F, pt.size = 1, group.by = "orig.ident", cells = cells.order.random)
+
+if (!dir.exists("Figure_1")) {dir.create("Figure_1")}
+ggsave(plot = Fig_S1A_plot, "Figure_S1A_UMAP.pdf", width = 7.5, height = 4.4444444, units = "in", path = "Figure_S1/")
+```
+
+# Figure S1B
+```{r}
+Sample_predicted_id_props <-  FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data %>% 
+  group_by(integrated_snn_res.0.1, orig.ident) %>% 
+  summarise(count=n()) %>% 
+  group_by(integrated_snn_res.0.1) %>% 
+  mutate(prop=count/sum(count)) %>% 
+  ungroup()
+
+Fig_S1B_plot <- ggplot(Sample_predicted_id_props, aes(x=integrated_snn_res.0.1, y=prop, fill=orig.ident)) +
+  geom_bar(stat="identity", position="stack") +
+  theme_bw() + 
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) + 
+    scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
+  xlab("Cluster") +
+  ylab("Proportion") + 
+  scale_fill_discrete(name = "Samples")
+
+if (!dir.exists("Figure_S1")) {dir.create("Figure_S1")}
+ggsave(plot = Fig_S1B_plot, "Figure_S1B_Cluster_Sample_Proportions.pdf", width = 3.75, height = 4.4444444, units = "in", path = "Figure_S1/")
+```
+
+# Figure S1C
+```{r}
+clustree <- FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated
+clustree <- FindClusters(clustree, resolution = 0.05)
+clustree <- FindClusters(clustree, resolution = 0.01)
+
+
+clustree.meta.data <- clustree@meta.data
+clustree.meta.data <- clustree.meta.data %>%
+  select(c("orig.ident", "nCount_RNA", "nFeature_RNA", "integrated_snn_res.0.1", "integrated_snn_res.0.05", "integrated_snn_res.0.01")) %>%
+    rename(res.0.1 = integrated_snn_res.0.1) %>%
+    rename(res.0.05 = integrated_snn_res.0.05) %>%
+    rename(res.0.01 = integrated_snn_res.0.01)
+
+
+
+clustree@meta.data <- clustree.meta.data
+  
+Fig_S1C_plot <- clustree(clustree, prefix = "res.")
+
+if (!dir.exists("Figure_S1")) {dir.create("Figure_S1")}
+ggsave(plot = Fig_S1C_plot, "Figure_S1C_Clustree.pdf", width = 7.5, height = 4.4444444*2, units = "in", path = "Figure_S1/")
+```
+
+# Figure S1D
+```{r}
+FAP.CAFs.Markers.Expr <- DotPlot(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, assay = "RNA", features = FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@assays$integrated@var.features)
+FAP.CAFs.Markers.Expr <- FAP.CAFs.Markers.Expr$data
+FAP.CAFs.Markers.Expr <- FAP.CAFs.Markers.Expr %>%
+  select(c(id, avg.exp.scaled, features.plot)) %>%
+  spread(key = id, value = avg.exp.scaled) %>%
+  column_to_rownames("features.plot")
+breaksList = seq(-2, 2, by = 0.1)
+Fig_S1D_plot <- pheatmap(FAP.CAFs.Markers.Expr, breaks = breaksList, show_rownames = FALSE,  treeheight_row = 0, color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(length(breaksList)))  
+
+if (!dir.exists("Figure_S1")) {dir.create("Figure_S1")}
+ggsave(plot = Fig_S1D_plot, "Figure_S1D_Cluster_Markers_Heatmap.pdf", width = 7.5, height = 4, units = "in", path = "Figure_S1/")
+```
+
+A function to plot the average expression of two gene signatures
+```{r}
+plot_two_Norm_Expr_Cluster_Average<-function(in_sign1, in_sign2, plot_SO, x_lab_sign1_name="sign 1 Z score", y_lab_sign2_name="sign 2 Z score", title = "title", meta.data.clusters = "meta data clusters", xlim, ylim){
+  DefaultAssay(plot_SO) <- "RNA"
+  #verifies the genes are part of the seurat object
+  in_sign1<-in_sign1[in_sign1 %in% rownames(plot_SO)]
+  in_sign2<-in_sign2[in_sign2 %in% rownames(plot_SO)]
+  
+  cell_sign1_expr <- AverageExpression(plot_SO, assays = "RNA", slot = "data", features = in_sign1, group.by = meta.data.clusters)
+  cell_sign1_expr <- as.data.frame(cell_sign1_expr$RNA)
+  cell_sign2_expr <- AverageExpression(plot_SO, assays = "RNA", slot = "data", features = in_sign2, group.by = meta.data.clusters)
+  cell_sign2_expr <- as.data.frame(cell_sign2_expr$RNA)
+  
+  cell_sign1_expr <- cell_sign1_expr %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cluster", value = "Counts",-Gene) %>%
+    group_by(Cluster) %>%
+    summarise(mean_sign1_expr = mean(Counts))
+  
+  cell_sign2_expr <- cell_sign2_expr %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cluster", value = "Counts",-Gene) %>%
+    group_by(Cluster) %>%
+    summarise(mean_sign2_expr = mean(Counts))
+  
+   cluster_scores <- cell_sign1_expr %>%
+    left_join(cell_sign2_expr, by = "Cluster")
+  
+
+  
+  p <- ggplot(cluster_scores, aes(x = mean_sign1_expr, y = mean_sign2_expr, color = Cluster)) +
+  geom_point(size = 8) +
+  labs(x = x_lab_sign1_name, y = y_lab_sign2_name) +
+  ggtitle(title) +
+  xlim +
+  ylim +
+  theme_bw() + 
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),    
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(), plot.title = element_text(hjust = 0.5)) 
+  
+  
+  return(p)
+  
+}
+```
+
+```{r}
+p1 <- plot_two_Norm_Expr_Cluster_Average(Wang.fibroblast.like.CAFs.Signature, Wang.Stellate.like.CAFs.Signature, FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, x_lab_sign1_name="Fibroblast-like CAF Signature Average Expression", y_lab_sign2_name="Stellate-like CAF Signature Average Expression", title = "Wang et al, 2021 - PDAC", meta.data.clusters = "integrated_snn_res.0.1", xlim = xlim(3, 12), ylim = ylim(2, 13)) + NoLegend()
+
+p2 <- plot_two_Norm_Expr_Cluster_Average(Wu.CAFs.Signature, Wu.PVLs.Signature, FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, x_lab_sign1_name="CAF Signature Average Expression", y_lab_sign2_name="PVL Signature Average Expression", title = "Wu et al, 2021 - Breast Cancer", meta.data.clusters = "integrated_snn_res.0.1", xlim = xlim(4, 7.5), ylim = ylim(3, 6)) + NoLegend()
+```
+
+# Figure S1E&F
+```{r}
+Fig_S1EF_plot <- plot_grid(p1, p2, nrow = 1)
+
+if (!dir.exists("Figure_S1")) {dir.create("Figure_S1")}
+ggsave(plot = Fig_S1EF_plot, "Figure_S1EF_Cluster_Average_Expression_CAF_CAP.pdf", width = 6, height = 4, units = "in", path = "Figure_S1/")
+```
+
+# Validation of broad subtypes in Peng
+```{r}
+Peng.Mesenchymal.Cells <- readRDS("Peng.Mesenchymal.Cells.rPCA.integrated.RDS")
+```
+
+The markers are loaded. The generation of the markers lists is described above. The lists are available in supplementary table S2 of the paper.
+```{r}
+WT1.CAF.Markers <- c("MMP23B", "SRM", "PLA2G2A", "ZNF593", "SH3BGRL3", "PODN", "CCN1", "F3", "OLFML3", "S100A10", "S100A11", "S100A16", "LMNA", "CRABP2", "UAP1", "DPT", "ABL2", "CHI3L1", "CD34", "OSR1", "CYP1B1", "RTN4", "EFEMP1", "UGP2", "CYTOR", "IL1R1", "SLC20A1", "COL3A1", "EEF1B2", "SCG2", "SERPINE2", "LRRFIP1", "TWIST2", "ANKRD28", "GNL3", "ABI3BP", "CCDC80", "FSTL1", "PTX3", "MLF1", "RPL22L1", "ATP13A3", "UGDH", "PDGFRA", "ANK2", "SFRP2", "SCRG1", "IL6ST", "LHFPL2", "LOX", "PDLIM4", "GPX3", "SLIT3", "DUSP1", "NOP16", "GFPT2", "TUBB2A", "PXDC1", "TNXB", "RPS18", "HMGA1", "PI16", "TENT5A", "SGK1", "SOD2", "EGFR", "ELN", "STEAP1", "PCOLCE", "SERPINE1", "NAMPT", "CCDC71L", "FLNC", "PDGFRL", "CLU", "SFRP1", "PENK", "COL14A1", "HAS2", "MYC", "ARC", "AL583785.1", "PLIN2", "ANXA1", "GAS1", "CTSL", "OGN", "KLF4", "TXN", "PAPPA", "ARPC5L", "PTGDS", "TUBB4B", "PFKP", "KLF6", "CELF2", "VIM", "CXCL12", "DDX21", "RGS10", "LSP1", "H19", "IGF2", "SPON1", "LDHA", "WT1", "CD44", "FOSL1", "CD248", "CLCF1", "MRGPRF", "PDGFD", "NNMT", "OAF", "MFAP5", "YBX3", "GPRC5A", "EMP1", "MGP", "MGST1", "TUBA1C", "LIMA1", "IGFBP6", "ITGA5", "CD63", "SRGAP1", "CCT2", "EEA1", "HELLPAR", "IGF1", "CKAP4", "RAN", "MEDAG", "RGCC", "TPT1", "NFKBIA", "FRMD6", "GNPNAT1", "FERMT2", "HIF1A", "SERPINA3", "BDKRB1", "THBS1", "FBN1", "FGF7", "ANXA2", "CILP", "CTSH", "RPS17", "ALDH1A3", "TNFRSF12A", "VASN", "C16orf89", "GSPT1", "MT2A", "MT1E", "MT1M", "MT1A", "MT1X", "COTL1", "ZNF469", "CYBA", "TUBB3", "SERPINF1", "EIF4A1", "MAP2K3", "CCL2", "IGFBP4", "NGFR", "LRRC59", "NME1", "SPHK1", "SOCS3", "METRNL", "COLEC12", "TUBB6", "NFATC1", "CFD", "C3", "ANGPTL4", "JUND", "HSPB6", "ZFP36", "PLAUR", "APOE", "EMP3", "HAS1", "MYADM", "NOP56", "CPXM1", "PROCR", "SULF2", "PTGIS", "NFATC2", "DOK5", "RCAN1", "COL6A1", "FBLN1", "SRPX", "ITM2A", "ACSL4", "CHRDL1", "GPC3", "CAV1")
+
+ENG.CAF.Markers <- c("NFIA", "LMO4", "TXNIP", "PRELP", "HSD11B1", "AGT", "COLEC11", "LTBP1", "CD302", "SCN7A", "FRZB", "IGFBP5", "SLC6A6", "NT5DC2", "EPHA3", "BOC", "ZBTB20", "LSAMP", "RBP1", "LXN", "RARRES1", "CLDN1", "APOD", "SPON2", "HOPX", "IGFBP7", "SPRY1", "HAND2", "HAND2-AS1", "C7", "SELENOP", "ENC1", "IQGAP2", "F2R", "NR2F1", "SOX4", "HSPA1A", "HSPA1B", "MOXD1", "SFRP4", "IGFBP3", "GNG11", "CPED1", "RUNX1T1", "ALDH1A1", "TLE4", "PTCH1", "COL15A1", "GSN", "ENG", "SOX6", "NRXN2", "CTSC", "C1S", "A2M", "MGP", "SSPN", "ITM2B", "PCDH9", "NR2F2", "TMEM204", "LITAF", "NUPR1", "DPEP1", "MFAP4", "MTRNR2L1", "ABCA6", "ABCA10", "CYGB", "TCF4", "DNAJB1", "LTBP4", "LAMP5", "CST3", "CST1", "CST2", "TGM2", "MAFB", "TSHZ2", "MIR99AHG", "TIMP1", "XIST", "FTX", "FGL2", "ITGBL1", "LEPR", "THBS4", "IER2", "EGR1", "CXCL14")
+
+LRRC15.CAF.Markers <- c("ISG15", "MXRA8", "MFAP2", "CAPZB", "NBL1", "COL8A2", "COL11A1", "CTSK", "CD55", "MATN3", "SDC1", "ANTXR1", "TMSB10", "FAP", "COL5A2", "FN1", "CHPF", "ARL4C", "VGLL4", "TMEM158", "COL8A1", "ITGB5", "TRIM59", "LRRC15", "OSTC", "PDGFC", "CPE", "PALLD", "NPR3", "C1QTNF3", "RAI14", "VCAN", "EDIL3", "TGFBI", "SPARC", "F13A1", "PTK7", "RUNX2", "COL12A1", "MARCKS", "COL10A1", "GJA1", "ENPP1", "PERP", "FNDC1", "THBS2", "ACTB", "TWIST1", "SUGCT", "INHBA", "AEBP1", "IGFBP3", "FZD1", "COL1A2", "LRRC17", "CALU", "RARRES2", "CTSB", "PDLIM2", "LOXL2", "SULF1", "FABP5", "CTHRC1", "FBXO32", "GOLM1", "COL5A1", "KIAA1217", "PLAU", "ADRA2A", "PLPP4", "HTRA1", "ADM", "MDK", "SERPINH1", "PRSS23", "MMP7", "CADM1", "NTM", "MFAP5", "PPFIBP1", "EPYC", "NUAK1", "GJB2", "POSTN", "MMP14", "DIO2", "IFI27", "GREM1", "TPM1", "ITGA11", "PKM", "LOXL1", "ISLR", "HCFC1R1", "IL32", "MMP2", "CDH11", "CMTM3", "COL1A1", "P4HB", "SLC16A3", "MYL12A", "GALNT1", "GRP", "CNN2", "TPM4", "IGFL2", "RCN3", "RIN2", "CST7", "CTSZ", "PTTG1IP", "MMP11", "MIF", "TIMP3", "LGALS1", "CD99", "MXRA5", "PGK1", "RPS4Y1", "PDLIM3", "TAGLN", "COMP", "GAPDH", "HSPA5", "IFI6")
+
+
+CAP.Markers <- c("FBLIM1", "ECE1", "TINAGL1", "GJA4", "HEYL", "ARHGAP29", "SORT1", "ADAMTS4", "RGS5", "RCSD1", "KIAA0040", "NIBAN1", "LMOD1", "PPP1R12B", "KCNS3", "ADCY3", "EPAS1", "B3GNT2", "ACTG2", "MTHFD2", "ARHGAP15", "ZEB2", "COBLL1", "SLC38A11", "KLHL23", "MAP3K20", "CHN1", "TFPI", "IGFBP2", "TNS1", "PTMA", "EFHD1", "MUSTN1", "ADAMTS9", "FILIP1L", "MYLK", "MGLL", "PLXND1", "SERPINI1", "LPP", "SOD3", "TBC1D1", "IGFBP7", "PARM1", "SPARCL1", "ENPEP", "FAM241A", "SYNPO2", "PDE5A", "INPP4B", "GUCY1A1", "GUCY1B1", "SORBS2", "CDH6", "ITGA1", "MAP1B", "MEF2C", "CARMN", "PDGFRB", "EBF1", "NEURL1B", "HRH2", "ID4", "RCAN2", "ADGRF5", "FILIP1", "PNRC1", "FHL5", "FAM162B", "PLN", "HEY2", "UTRN", "PDGFA", "SEPTIN7", "HIP1", "CD36", "STEAP4", "ARPC1A", "CAV2", "CAV1", "CALD1", "ANGPT2", "SLC7A2", "RBPMS", "PI15", "FABP4", "SDC2", "ANGPT1", "PTK2", "PTP4A3", "LURAP1L", "TPM2", "TLN1", "S1PR3", "STOM", "OLFML2A", "NRARP", "CCDC3", "RSU1", "ITGB1", "PRKG1", "FAM13C", "PLAC9", "SNCG", "ADIRF", "ACTA2", "PLCE1", "PDLIM1", "GRK5", "IFITM2", "CD151", "PHLDA2", "CAVIN3", "MRVI1", "CD59", "C11orf96", "FADS3", "MALAT1", "ARHGEF17", "TRPC6", "GUCY1A2", "CRYAB", "TAGLN", "MCAM", "ESAM", "ETS1", "A2M", "APOLD1", "ARHGDIB", "EPS8", "RERGL", "PDE3A", "KCNJ8", "KRT18", "ATP5MC2", "ITGA7", "MYL6", "NDUFA4L2", "AVPR1A", "CPM", "PHLDA1", "CSRP2", "PPP1R12A", "BTG1", "NUDT4", "NTN4", "COX6A1", "RASL11A", "LHFPL6", "COL4A1", "COL4A2", "ARHGEF7", "CHURC1", "PGF", "CLMN", "CRIP2", "CRIP1", "B2M", "OAZ2", "RASL12", "CSPG4", "LINGO1", "MFGE8", "SLCO3A1", "NR2F2", "SYNM", "MYH11", "TGFB1I1", "TPPP3", "ZFHX3", "WFDC1", "FOXC2", "ADAP2", "AOC3", "GJC1", "HIGD1B", "SGCA", "SEPTIN4", "TBX2", "SSTR2", "GPRC5C", "C1QTNF1", "IMPA2", "MAPRE2", "RNF152", "CCDC102B", "NOTCH3", "ISYNA1", "UBA2", "LGI4", "COX7A1", "PPP1R14A", "ACTN4", "GMFG", "BCAM", "GPR4", "EHD2", "RRAS", "JAG1", "DSTN", "COX4I2", "FOXS1", "MYL9", "DBNDD2", "PMEPA1", "ADAMTS1", "MAP3K7CL", "COL18A1", "CHCHD10", "MYH9", "TMSB4X", "EGFL6", "TMEM47", "SH3BGRL", "ARPC5", "RAB13", "HLA-C", "TPM1", "LBH", "PLXDC1", "KANK2", "NDRG2", "ROCK1", "GPX3", "SLC25A5", "KCNE4", "MSN", "HES4", "CLU", "PLS3", "FLNA", "PALM2-AKAP2", "APLP2", "MYO1B", "ZBTB16", "ID3", "SYNE2", "SORBS1", "RHOB", "TOB1", "CSRP1", "LAMA4", "MIR4435-2HG", "PDK4", "UACA", "FHL1", "JUNB", "CYTOR", "CNN1", "SLC12A2", "NR4A1", "NID1", "NR4A2", "PEAK1", "CD9", "CRIM1", "CEBPD", "CAMK2N1", "CDKN1A", "NET1", "IFITM1", "GADD45B", "MT1M", "FABP5", "S100A4", "DEPP1", "C12orf75")
+```
+
+A function that adds a z-score in the metadata of a seurat object. The signature should be a character vector
+```{r}
+Add_Z<-function(in_SO, in_sig, Z_name){
+  
+  DefaultAssay(in_SO) <- "RNA"
+  #verifies the genes are part of the seurat object
+  in_sig<-in_sig[in_sig %in% rownames(in_SO)]
+  
+   # Genes which are 0 in >95% of cells are removed
+  long_NC <- in_SO@assays$RNA@data[in_sig,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) %>% 
+    group_by(Gene) %>% 
+    summarise(prop_zeros = sum(NC == 0)/n()) %>% 
+    filter(prop_zeros <= 0.95) %>% 
+    select(-prop_zeros)
+    
+  # NC is extracted from the SO
+    long_NC <- in_SO@assays$RNA@data[long_NC$Gene,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) 
+  
+  # Signature scores are calculated for each cell
+  get_zs<-function(in_sign){
+    Z_scores<-long_NC %>%
+      filter(Gene %in% in_sign) %>% 
+      group_by(Gene) %>%
+      mutate(Z = (NC - mean(NC)) / sd(NC)) %>%
+      drop_na() %>% 
+      group_by(Cell) %>%
+      summarise(sign_Z = mean(Z) %>% round(2)) %>%
+      rename(!!Z_name := sign_Z)
+    
+    return(Z_scores)
+  }
+  
+  Z_df<-get_zs(in_sig) 
+ 
+  # Z-score is added to the metadata
+  in_SO@meta.data<-in_SO@meta.data %>% 
+    rownames_to_column("Cell") %>% 
+    left_join(Z_df, by="Cell") %>% 
+    column_to_rownames("Cell")
+  
+  return(in_SO)
+}
+```
+
+```{r}
+Peng.Mesenchymal.Cells <- Add_Z(Peng.Mesenchymal.Cells, WT1.CAF.Markers, "WT1+ CAFs")
+Peng.Mesenchymal.Cells <- Add_Z(Peng.Mesenchymal.Cells, ENG.CAF.Markers, "ENG+ CAFs")
+Peng.Mesenchymal.Cells <- Add_Z(Peng.Mesenchymal.Cells, LRRC15.CAF.Markers, "LRRC15+ myCAFs")
+Peng.Mesenchymal.Cells <- Add_Z(Peng.Mesenchymal.Cells, CAP.Markers, "CAPs")
+```
+
+# Figure S2C
+```{r}
+Fig_S2C_plot <- DimPlot(Peng.Mesenchymal.Cells, reduction = "umap", label = F, pt.size = 0.5, group.by = "Author_Annotation") + ggtitle("Peng 2019, PDAC - Mesenchymal cells 
+Author Annotation")
+
+if (!dir.exists("Figure_S2")) {dir.create("Figure_S2")}
+ggsave(plot = Fig_S2C_plot, "Figure_S2C_Validation_Peng_UMAP.pdf", width = 5, height = 3, units = "in", path = "Figure_S2/")
+```
+
+# Figure S2D
+```{r}
+p1 <- FeaturePlot(Peng.Mesenchymal.Cells, "WT1+ CAFs", cols = c("darkgrey", "darkred"), min.cutoff = 0, max.cutoff = 1, pt.size = 0.5) + ggtitle("WT1+ CAF Gene Signature")
+p2 <- FeaturePlot(Peng.Mesenchymal.Cells, "ENG+ CAFs", cols = c("darkgrey", "darkred"), min.cutoff = 0, max.cutoff = 1, pt.size = 0.5) + ggtitle("ENG+ CAF Gene Signature")
+p3 <- FeaturePlot(Peng.Mesenchymal.Cells, "LRRC15+ myCAFs", cols = c("darkgrey", "darkred"), min.cutoff = 0, max.cutoff = 1, pt.size = 0.5) + ggtitle("LRRC15+ CAF Gene Signature")
+p4 <- FeaturePlot(Peng.Mesenchymal.Cells, "CAPs", cols = c("darkgrey", "darkred"), min.cutoff = 0, max.cutoff = 1, pt.size = 0.5) + ggtitle("CAP Gene Signature")
+
+Fig_S2D_plot <- plot_grid(p1, p2, p3, p4, nrow = 2)
+
+if (!dir.exists("Figure_S2")) {dir.create("Figure_S2")}
+ggsave(plot = Fig_S2D_plot, "Figure_S2D_Validation_Peng_Signature_Scores.pdf", width = 10, height = 6, units = "in", path = "Figure_S2/")
+```
+
+
+# Normal mesenchymal cells in pancreas characterization and integration with FAP+ CAFs
+# Figure S3A-D
+```{r}
+p1 <- VlnPlot(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, features =  c("DCN", "COL1A1", "HSPA1A", "HSPA1B"), assay = "RNA", pt.size = 0, stack = T, flip = T, fill.by = "ident", group.by = "Cluster_labels") + NoLegend()
+p2 <- VlnPlot(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, features =  c("CXCL1", "CXCL8", "HAS2", "CD44"), assay = "RNA", pt.size = 0, stack = T, flip = T, fill.by = "ident", group.by = "Cluster_labels") + NoLegend()
+p3 <- VlnPlot(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, features =  c("MKI67", "TOP2A", "UBE2C", "UBE2T"), assay = "RNA", pt.size = 0, stack = T, flip = T, fill.by = "ident", group.by = "Cluster_labels") + NoLegend()
+p4 <- VlnPlot(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, features =  c("MCAM", "RGS5", "ADIRF", "CRIP1"), assay = "RNA", pt.size = 0, stack = T, flip = T, fill.by = "ident", group.by = "Cluster_labels") + NoLegend()
+
+Fig_S3AD_plot <- plot_grid(p1, p2, p3, p4, nrow = 1)
+
+if (!dir.exists("Figure_S3")) {dir.create("Figure_S3")}
+ggsave(plot = Fig_S3AD_plot, "Figure_S3A_D_Olaniru_Developing_Panc_Cluster_Markers.pdf", width = 7.5*1.25, height = 4.4444444*1.25, units = "in", path = "Figure_S3/")
+```
+
+# GSEA for pathways enriched in normal mesenchymal clusters
+```{r}
+
+Top.Specific.Norm.0.Pathways <- Norm.Panc.scpa_out_cluster_0_enriched %>%
+  filter(!Pathway %in% c(Norm.Panc.scpa_out_cluster_1_enriched$Pathway, Norm.Panc.scpa_out_cluster_3_enriched$Pathway)) %>%
+  top_n(20, (qval+FC))
+
+Top.Specific.Norm.1.Pathways <- Norm.Panc.scpa_out_cluster_1_enriched  %>%
+  filter(!Pathway %in% c(Norm.Panc.scpa_out_cluster_0_enriched$Pathway, Norm.Panc.scpa_out_cluster_3_enriched$Pathway)) %>%
+  top_n(20, (qval+FC))
+
+Top.Specific.Norm.3.Pathways <-  Norm.Panc.scpa_out_cluster_3_enriched %>%
+  filter(!Pathway %in% c(Norm.Panc.scpa_out_cluster_0_enriched$Pathway, Norm.Panc.scpa_out_cluster_1_enriched$Pathway)) %>%
+  top_n(20, (qval+FC))
+
+Top.Norm.0.Pathways <- Norm.Panc.scpa_out_cluster_0_enriched %>%
+  top_n(20, (qval+FC))
+
+Top.Norm.1.Pathways <- Norm.Panc.scpa_out_cluster_1_enriched  %>%
+  top_n(20, (qval+FC))
+
+Top.Norm.3.Pathways <-  Norm.Panc.scpa_out_cluster_3_enriched %>%
+  top_n(20, (qval+FC))
+
+Selected.Pathways <- c("KEGG_VASCULAR_SMOOTH_MUSCLE_CONTRACTION", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "KEGG_FOCAL_ADHESION", "REACTOME_INTERLEUKIN_1_FAMILY_SIGNALING", "REACTOME_SIGNALING_BY_INTERLEUKINS", "HALLMARK_MYC_TARGETS_V1", "REACTOME_EXTRACELLULAR_MATRIX_ORGANIZATION", "REACTOME_COLLAGEN_FORMATION", "HALLMARK_MYOGENESIS")
+
+
+Norm.Panc.Cluster.Pathways <- rbind(Norm.Panc.scpa_out_cluster_0_enriched, Norm.Panc.scpa_out_cluster_1_enriched, Norm.Panc.scpa_out_cluster_3_enriched) 
+
+Selected.Norm.Panc.Cluster.Pathways <- Norm.Panc.Cluster.Pathways %>%
+  filter(Pathway %in% Selected.Pathways)
+
+Selected.Norm.Panc.Cluster.Pathways <- Selected.Norm.Panc.Cluster.Pathways %>%
+  mutate(Pathway = gsub("_", " ", Pathway))
+```
+
+#Figure S3E
+```{r}
+Fig_S3E_plot <- ggplot(Selected.Norm.Panc.Cluster.Pathways, aes(x = Cluster, y = Pathway)) + 
+               geom_point(aes(color = qval, size = FC)) +
+               theme_bw(base_size =6) +
+        scale_colour_gradient(limits=c(0, 10), low="white", high = "red") +
+        #scale_size(range = c(2,8)) +
+        ylab(NULL) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1, size = 12), title = element_text(size = 12), axis.text.y = element_text(size = 10), legend.text = element_text(size = 10)) +
+  scale_x_discrete(limits = c("Normal A", "Normal B", "Normal D")) +
+  scale_y_discrete(limits = c("KEGG VASCULAR SMOOTH MUSCLE CONTRACTION", "HALLMARK TNFA SIGNALING VIA NFKB", "KEGG FOCAL ADHESION", "REACTOME INTERLEUKIN 1 FAMILY SIGNALING", "REACTOME SIGNALING BY INTERLEUKINS", "HALLMARK MYC TARGETS V1", "REACTOME EXTRACELLULAR MATRIX ORGANIZATION", "REACTOME COLLAGEN FORMATION", "HALLMARK MYOGENESIS"), labels = function(x) str_wrap(x, width = 30))
+
+if (!dir.exists("Figure_S3")) {dir.create("Figure_S3")}
+ggsave(plot = Fig_S3E_plot, "Figure_S3E_Olaniru_Developing_Panc_GSEA.pdf", width = 7.5, height = 4.4444444, units = "in", path = "Figure_S3/")
+```
+
+#rPCA integration of normal and PDAC mesenchymal cells
+```{r}
+Norm.Human.Panc <- Olaniru.Developing.Panc.Mesenchymal.SO.integrated@assays$RNA@counts
+Norm.Human.Panc.meta.data <- Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data
+
+Norm.Human.Panc.meta.data <- Norm.Human.Panc.meta.data %>%
+  mutate(Batch = case_when(
+    Sample == "S1" ~ "Olaniru et al Rep 1",
+    Sample == "S2" ~ "Olaniru et al Rep 2",
+    Sample == "S3" ~ "Olaniru et al Rep 3",
+    Sample == "S4" ~ "Olaniru et al Rep 4")) %>%
+  mutate(Cell_type = case_when(
+    integrated_snn_res.0.1 == "0" ~ "Normal 0",
+    integrated_snn_res.0.1 == "1" ~ "Normal 1",
+    integrated_snn_res.0.1 == "2" ~ "Normal 2",
+    integrated_snn_res.0.1 == "3" ~ "Normal 3")) %>%
+   mutate(Status = "Normal") %>%
+  select(c("Batch", "Cell_type", "Status"))
+
+
+
+
+Cancer.Huma.Panc <- FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@assays$RNA@counts
+Cancer.Huma.Panc.meta.data <- FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data
+Cancer.Huma.Panc.meta.data <- Cancer.Huma.Panc.meta.data %>%
+  mutate(Batch = case_when(
+    orig.ident == "S1" ~ "Cumming et al Rep 1",
+    orig.ident == "S2" ~ "Cumming et al Rep 2",
+    orig.ident == "S3" ~ "Cumming et al Rep 3",
+    orig.ident == "S4" ~ "Cumming et al Rep 4",
+    orig.ident == "S5" ~ "Cumming et al Rep 5",
+    orig.ident == "S6" ~ "Cumming et al Rep 6")) %>%
+  mutate(Cell_type = case_when(
+    integrated_snn_res.0.1 == "0" ~ "Cancer 0",
+    integrated_snn_res.0.1 == "1" ~ "Cancer 1",
+    integrated_snn_res.0.1 == "2" ~ "Cancer 2",
+    integrated_snn_res.0.1 == "3" ~ "Cancer 3",
+    integrated_snn_res.0.1 == "4" ~ "Cancer 4")) %>%
+  mutate(Status = "Cancer") %>%
+  select(c("Batch", "Cell_type", "Status"))
+
+# Find the common rownames
+common_rows <- intersect(rownames(Norm.Human.Panc), rownames(Cancer.Huma.Panc))
+
+# Subset the matrices to keep only the common rows
+Norm.Human.Panc <- Norm.Human.Panc[common_rows, ]
+Cancer.Huma.Panc <- Cancer.Huma.Panc[common_rows, ]
+
+Norm.Human.Panc.SO <- CreateSeuratObject(counts = Norm.Human.Panc, meta.data = Norm.Human.Panc.meta.data)
+
+Cancer.Huma.Panc.SO <- CreateSeuratObject(Cancer.Huma.Panc, meta.data = Cancer.Huma.Panc.meta.data)
+
+Human.Cancer.Normal.SO <- merge(Norm.Human.Panc.SO, Cancer.Huma.Panc.SO)
+```
+
+The cell cycle is regressed using the cell cycle related gene lists from the Regev lab (https://github.com/scverse/scanpy_usage/tree/master/180209_cell_cycle/data). 
+```{r}
+human.s.genes<-c("MCM5", "PCNA", "TYMS", "FEN1", "MCM2", "MCM4", "RRM1", "UNG", "GINS2", "MCM6", "CDCA7", "DTL", "PRIM1", "UHRF1", "MLF1IP", "HELLS", "RFC2", "RPA2", "NASP", "RAD51AP1", "GMNN", "WDR76", "SLBP", "CCNE2", "UBR7", "POLD3", "MSH2", "ATAD2", "RAD51", "RRM2", "CDC45", "CDC6", "EXO1", "TIPIN", "DSCC1", "BLM", "CASP8AP2", "USP1", "CLSPN", "POLA1", "CHAF1B", "BRIP1", "E2F8") 
+
+human.g2m.genes<-c("HMGB2", "CDK1", "NUSAP1", "UBE2C", "BIRC5", "TPX2", "TOP2A", "NDC80", "CKS2", "NUF2", "CKS1B", "MKI67", "TMPO", "CENPF", "TACC3", "FAM64A", "SMC4", "CCNB2", "CKAP2L", "CKAP2", "AURKB", "BUB1", "KIF11", "ANP32E", "TUBB4B", "GTSE1", "KIF20B", "HJURP", "CDCA3", "HN1", "CDC20", "TTK", "CDC25C", "KIF2C", "RANGAP1", "NCAPD2", "DLGAP5", "CDCA2", "CDCA8", "ECT2", "KIF23", "HMMR", "AURKA", "PSRC1", "ANLN", "LBR", "CKAP5", "CENPE", "CTCF", "NEK2", "G2E3", "GAS2L3", "CBX5", "CENPA")
+
+Patient.list <- SplitObject(Human.Cancer.Normal.SO, split.by = "Batch")
+Patient.list <- lapply(X = Patient.list, FUN = function(x) {
+    x[["percent.mt"]] <- PercentageFeatureSet(x, pattern = "^MT-")
+    x <- NormalizeData(x)
+    x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 3000)
+})
+features <- SelectIntegrationFeatures(object.list = Patient.list, nfeatures = 3000)
+Patient.list <- lapply(X = Patient.list, FUN = function(x) {
+    x <- CellCycleScoring(x, s.features = human.s.genes, g2m.features = human.g2m.genes, set.ident = TRUE)
+    x <- ScaleData(x, vars.to.regress = c("S.Score", "G2M.Score"), features = features, verbose = FALSE)
+    x <- RunPCA(x, features = features, verbose = FALSE)
+})
+Patient.anchors <- FindIntegrationAnchors(object.list = Patient.list, anchor.features = features, reduction = "rpca")
+Human.Cancer.Normal.SO.integrated <- IntegrateData(anchorset = Patient.anchors)
+```
+
+```{r}
+DefaultAssay(Human.Cancer.Normal.SO.integrated) <- "integrated"
+Human.Cancer.Normal.SO.integrated <- ScaleData(Human.Cancer.Normal.SO.integrated, verbose = FALSE)
+Human.Cancer.Normal.SO.integrated <- RunPCA(Human.Cancer.Normal.SO.integrated, npcs = 50, verbose = FALSE)
+ElbowPlot(Human.Cancer.Normal.SO.integrated, ndims = 50)
+# Determine percent of variation associated with each PC
+pct <- Human.Cancer.Normal.SO.integrated@reductions$pca@stdev / sum(Human.Cancer.Normal.SO.integrated@reductions$pca@stdev) * 100
+# Determine the difference between variation of PC and subsequent PC
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1),  decreasing = T)[1] + 1 # last point where change of % of variation is more than 0.1%.
+Human.Cancer.Normal.SO.integrated <- RunUMAP(Human.Cancer.Normal.SO.integrated, reduction = "pca", dims = 1:12)
+Human.Cancer.Normal.SO.integrated <- FindNeighbors(Human.Cancer.Normal.SO.integrated, reduction = "pca", dims = 1:12)
+Human.Cancer.Normal.SO.integrated <- FindClusters(Human.Cancer.Normal.SO.integrated, resolution = 0.1)
+```
+
+```{r}
+#saveRDS(Human.Cancer.Normal.SO.integrated, "Human.Cancer.Normal.SO.integrated.RDS")
+```
+
+```{r}
+Human.Cancer.Normal.SO.integrated <- readRDS("Human.Cancer.Normal.SO.integrated.RDS")
+```
+
+```{r}
+p1 <- DimPlot(Human.Cancer.Normal.SO.integrated, reduction = "umap") + ggtitle("rPCA Integration")
+cells.order.random <- sample(Cells(Human.Cancer.Normal.SO.integrated))
+p2 <- DimPlot(Human.Cancer.Normal.SO.integrated, reduction = "umap", group.by = "Status", cells = cells.order.random) + ggtitle("")
+
+Human.Cancer.Normal.SO.integrated@meta.data <- Human.Cancer.Normal.SO.integrated@meta.data %>%
+  mutate(Cluster_Label = case_when(
+    Cell_type == "Normal 0" ~ "Normal A",
+    Cell_type == "Normal 1" ~ "Normal B",
+    Cell_type == "Normal 2" ~ "Normal C",
+    Cell_type == "Normal 3" ~ "Normal D",
+    Cell_type == "Cancer 0" ~ "Cancer 0",
+    Cell_type == "Cancer 1" ~ "Cancer 1",
+    Cell_type == "Cancer 2" ~ "Cancer 2",
+    Cell_type == "Cancer 3" ~ "Cancer 3",
+    Cell_type == "Cancer 4" ~ "Cancer 4"
+  ))
+Disease_status_props <-  Human.Cancer.Normal.SO.integrated@meta.data %>% 
+  group_by(integrated_snn_res.0.1, Status) %>% 
+  summarise(count=n()) %>% 
+  group_by(integrated_snn_res.0.1) %>% 
+  mutate(prop=count/sum(count)) %>% 
+  ungroup()
+
+p3 <- ggplot(Disease_status_props, aes(x=integrated_snn_res.0.1, y=prop, fill=Status)) +
+  geom_bar(stat="identity", position="stack") +
+  theme_bw() + 
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) + 
+    scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
+  xlab("Cluster") +
+  ylab("Proportion") + 
+  scale_fill_discrete(name = "Cluster Proportions 
+Normal & Cancer Clusters")
+
+ggplotColours <- function(n = 6, h = c(0, 360) + 15){
+  if ((diff(h) %% 360) < 1) h[2] <- h[2] - 360/n
+  hcl(h = (seq(h[1], h[2], length = n)), c = 100, l = 65)
+}
+
+color_list <- ggplotColours(n=5)
+
+p4 <- DimPlot(Human.Cancer.Normal.SO.integrated, reduction = "umap", group.by = "Cluster_Label", cells = cells.order.random) + ggtitle("") + 
+  scale_color_manual(values=c("#F8766D", "#A3A500", "#00BF7D", "#00B0F6", "#E76BF3", "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3"))
+
+Cluster_id_props <-  Human.Cancer.Normal.SO.integrated@meta.data %>% 
+  group_by(integrated_snn_res.0.1, Cluster_Label) %>% 
+  summarise(count=n()) %>% 
+  group_by(integrated_snn_res.0.1) %>% 
+  mutate(prop=count/sum(count)) %>% 
+  ungroup()
+p5 <- ggplot(Cluster_id_props, aes(x=integrated_snn_res.0.1, y=prop, fill=Cluster_Label)) +
+  geom_bar(stat="identity", position="stack") +
+  theme_bw() + 
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) + 
+    scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
+  xlab("Cluster") +
+  ylab("Proportion") + 
+  scale_fill_discrete(name = "Cluster Proportions 
+Normal & Cancer Clusters") + 
+  scale_fill_manual(values=c("#F8766D", "#A3A500", "#00BF7D", "#00B0F6", "#E76BF3", "#E41A1C", "#377EB8", "#4DAF4A", "#984EA3"))
+```
+
+# Figure S3F-J
+```{r}
+Fig_S3FGH_plot <- plot_grid(p1, p2, p3, nrow = 1)
+Fig_S3IJ_plot <- plot_grid(p4, p5, nrow = 1)
+
+if (!dir.exists("Figure_S3")) {dir.create("Figure_S3")}
+ggsave(plot = Fig_S3FGH_plot, "Figure_S3F_H_Normal_Cancer_Integration.pdf", width = 15, height = 4.4444444, units = "in", path = "Figure_S3/")
+
+ggsave(plot = Fig_S3IJ_plot, "Figure_S3I_J_Normal_Cancer_Integration.pdf", width = 10, height = 4.4444444, units = "in", path = "Figure_S3/")
+```
+
+# Find and plot common genes between normal and PDAC mesenchymal clusters
+```{r}
+Norm.Panc.Markers.Cluster.0 <- FindMarkers(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, ident.1 = "0", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Norm.Panc.Markers.Cluster.0 <- Norm.Panc.Markers.Cluster.0 %>%
+  filter(p_val_adj < 0.05)
+Norm.Panc.Markers.Cluster.1 <- FindMarkers(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, ident.1 = "1", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Norm.Panc.Markers.Cluster.1 <- Norm.Panc.Markers.Cluster.1 %>%
+  filter(p_val_adj < 0.05)
+Norm.Panc.Markers.Cluster.2 <- FindMarkers(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, ident.1 = "2", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Norm.Panc.Markers.Cluster.2 <- Norm.Panc.Markers.Cluster.2 %>%
+  filter(p_val_adj < 0.05)
+Norm.Panc.Markers.Cluster.3 <- FindMarkers(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, ident.1 = "3", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+Norm.Panc.Markers.Cluster.3 <- Norm.Panc.Markers.Cluster.3 %>%
+  filter(p_val_adj < 0.05)
+```
+
+```{r}
+Common.0.Genes <- intersect(rownames(Norm.Panc.Markers.Cluster.0), rownames(Cluster.0.Markers))
+Common.1.Genes <- intersect(rownames(Norm.Panc.Markers.Cluster.1), rownames(Cluster.1.Markers))
+Common.3.Genes <- intersect(rownames(Norm.Panc.Markers.Cluster.3), rownames(Cluster.3.Markers))
+Common.Norm.Cancer.Genes.Pro.Removed <- unique(c(Common.0.Genes, Common.1.Genes, Common.3.Genes))
+
+Common.Norm.Cancer.Genes.Norm.Pro.Removed.Expr <- DotPlot(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, assay = "RNA", features = Common.Norm.Cancer.Genes.Pro.Removed, group.by = "Cluster_labels")
+Common.Norm.Cancer.Genes.Norm.Pro.Removed.Expr <- Common.Norm.Cancer.Genes.Norm.Pro.Removed.Expr$data
+
+Common.Norm.Cancer.Genes.Cancer.Pro.Removed.Expr <- DotPlot(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, assay = "RNA", features = Common.Norm.Cancer.Genes.Pro.Removed)
+Common.Norm.Cancer.Genes.Cancer.Pro.Removed.Expr <- Common.Norm.Cancer.Genes.Cancer.Pro.Removed.Expr$data
+
+Common.Norm.Cancer.Genes.Norm.Pro.Removed.Expr <- Common.Norm.Cancer.Genes.Norm.Pro.Removed.Expr %>%
+  mutate(id = paste("Normal", id, sep = " "))
+
+Common.Norm.Cancer.Genes.Cancer.Pro.Removed.Expr <- Common.Norm.Cancer.Genes.Cancer.Pro.Removed.Expr %>%
+  mutate(id = paste("Cancer", id, sep = " "))
+```
+
+```{r}
+Common.Norm.Cancer.Genes.Pro.Removed.Expr <- rbind(Common.Norm.Cancer.Genes.Cancer.Pro.Removed.Expr, Common.Norm.Cancer.Genes.Norm.Pro.Removed.Expr)
+
+Common.Norm.Cancer.Genes.Pro.Removed.Expr <- Common.Norm.Cancer.Genes.Pro.Removed.Expr %>%
+  select(c(id, avg.exp.scaled, features.plot)) %>%
+  spread(key = id, value = avg.exp.scaled) %>%
+  column_to_rownames("features.plot")
+
+Common.Norm.Cancer.Genes.Pro.Removed.Expr <- Common.Norm.Cancer.Genes.Pro.Removed.Expr %>%
+  select(c("Cancer 0", "Normal A", "Cancer 1", "Normal B", "Cancer 3", "Normal D"))
+
+Heatmap.Genes <- rownames(Common.Norm.Cancer.Genes.Pro.Removed.Expr)
+
+Selected.Heatmap.Genes <- c("HSPA1A", "HSPA1B", "IGFBP5", "IGFBP7", "CD44", "CCL2", "TNFRSF12A", "HAS2", "IL1R1", "MCAM", "RGS5", "CRIP1", "JAG1", "ACTA2")
+
+replace_chars <- function(lst, reference) {
+  # Loop over the characters in lst
+  for (i in seq_along(lst)) {
+    # Check if the character is in the reference list
+    if (!(lst[i] %in% reference)) {
+      # If not, replace it with ""
+      lst[i] <- ""
+    }
+  }
+  # Return the modified list
+  lst
+}
+
+# Call the function with list1 and list2 as arguments
+Selected.Heatmap.Genes <- replace_chars(Heatmap.Genes, Selected.Heatmap.Genes)
+```
+
+# Figure S3K
+```{r}
+breaksList = seq(-2, 2, by = 0.1)
+Fig_S3K_plot <- pheatmap(Common.Norm.Cancer.Genes.Pro.Removed.Expr, breaks = breaksList, labels_row = Selected.Heatmap.Genes, cluster_cols = FALSE,  cluster_rows = FALSE, color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(length(breaksList)))
+
+if (!dir.exists("Figure_S3")) {dir.create("Figure_S3")}
+ggsave(plot = Fig_S3K_plot, "Figure_S3K_Heatmap_common_cancer_normal.pdf", width = 5, height = 4.4444444, units = "in", path = "Figure_S3/")
+```
+
+# GSEA to find common pathways between normal and PDAC mesenchymal clusters
+```{r}
+FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data <- FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data %>%
+  mutate(Cluster.0.GSEA = case_when(
+    integrated_snn_res.0.1 == 0 ~ "0",
+    integrated_snn_res.0.1 == 1 ~ "Other",
+    integrated_snn_res.0.1 == 2 ~ "Other",
+    integrated_snn_res.0.1 == 3 ~ "Other",
+    integrated_snn_res.0.1 == 4 ~ "Other")
+  )
+FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data <- FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data %>%
+  mutate(Cluster.1.GSEA = case_when(
+    integrated_snn_res.0.1 == 0 ~ "Other",
+    integrated_snn_res.0.1 == 1 ~ "1",
+    integrated_snn_res.0.1 == 2 ~ "Other",
+    integrated_snn_res.0.1 == 3 ~ "Other",
+    integrated_snn_res.0.1 == 4 ~ "Other")
+  )
+FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data <- FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data %>%
+  mutate(Cluster.2.GSEA = case_when(
+    integrated_snn_res.0.1 == 0 ~ "Other",
+    integrated_snn_res.0.1 == 1 ~ "Other",
+    integrated_snn_res.0.1 == 2 ~ "2",
+    integrated_snn_res.0.1 == 3 ~ "Other",
+    integrated_snn_res.0.1 == 4 ~ "Other")
+  )
+FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data <- FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data %>%
+  mutate(Cluster.3.GSEA = case_when(
+    integrated_snn_res.0.1 == 0 ~ "Other",
+    integrated_snn_res.0.1 == 1 ~ "Other",
+    integrated_snn_res.0.1 == 2 ~ "Other",
+    integrated_snn_res.0.1 == 3 ~ "3",
+    integrated_snn_res.0.1 == 4 ~ "Other")
+  )
+FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data <- FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data %>%
+  mutate(Cluster.4.GSEA = case_when(
+    integrated_snn_res.0.1 == 0 ~ "Other",
+    integrated_snn_res.0.1 == 1 ~ "Other",
+    integrated_snn_res.0.1 == 2 ~ "Other",
+    integrated_snn_res.0.1 == 3 ~ "Other",
+    integrated_snn_res.0.1 == 4 ~ "4")
+  )
+```
+
+```{r}
+scpa_out_cluster_0 <- compare_seurat(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated,
+                           group1 = "Cluster.0.GSEA", 
+                           group1_population = c("0", "Other"),
+                           pathways = pathways)
+scpa_out_cluster_1 <- compare_seurat(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated,
+                           group1 = "Cluster.1.GSEA", 
+                           group1_population = c("1", "Other"),
+                           pathways = pathways)
+scpa_out_cluster_2 <- compare_seurat(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated,
+                           group1 = "Cluster.2.GSEA", 
+                           group1_population = c("2", "Other"),
+                           pathways = pathways)
+scpa_out_cluster_3 <- compare_seurat(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated,
+                           group1 = "Cluster.3.GSEA", 
+                           group1_population = c("3", "Other"),
+                           pathways = pathways)
+scpa_out_cluster_4 <- compare_seurat(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated,
+                           group1 = "Cluster.4.GSEA", 
+                           group1_population = c("4", "Other"),
+                           pathways = pathways)
+```
+
+```{r}
+Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data <- Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data %>%
+  mutate(Cluster.0.GSEA = case_when(
+    integrated_snn_res.0.1 == 0 ~ "0",
+    integrated_snn_res.0.1 == 1 ~ "Other",
+    integrated_snn_res.0.1 == 2 ~ "Other",
+    integrated_snn_res.0.1 == 3 ~ "Other"))
+Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data <- Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data %>%
+  mutate(Cluster.1.GSEA = case_when(
+    integrated_snn_res.0.1 == 0 ~ "Other",
+    integrated_snn_res.0.1 == 1 ~ "1",
+    integrated_snn_res.0.1 == 2 ~ "Other",
+    integrated_snn_res.0.1 == 3 ~ "Other"))
+Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data <- Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data %>%
+  mutate(Cluster.2.GSEA = case_when(
+    integrated_snn_res.0.1 == 0 ~ "Other",
+    integrated_snn_res.0.1 == 1 ~ "Other",
+    integrated_snn_res.0.1 == 2 ~ "2",
+    integrated_snn_res.0.1 == 3 ~ "Other"))
+Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data <- Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data %>%
+  mutate(Cluster.3.GSEA = case_when(
+    integrated_snn_res.0.1 == 0 ~ "Other",
+    integrated_snn_res.0.1 == 1 ~ "Other",
+    integrated_snn_res.0.1 == 2 ~ "Other",
+    integrated_snn_res.0.1 == 3 ~ "3"))
+```
+
+```{r}
+Norm.Panc.scpa_out_cluster_0 <- compare_seurat(Olaniru.Developing.Panc.Mesenchymal.SO.integrated,
+                           group1 = "Cluster.0.GSEA", 
+                           group1_population = c("0", "Other"),
+                           pathways = pathways)
+Norm.Panc.scpa_out_cluster_1 <- compare_seurat(Olaniru.Developing.Panc.Mesenchymal.SO.integrated,
+                           group1 = "Cluster.1.GSEA", 
+                           group1_population = c("1", "Other"),
+                           pathways = pathways)
+Norm.Panc.scpa_out_cluster_2 <- compare_seurat(Olaniru.Developing.Panc.Mesenchymal.SO.integrated,
+                           group1 = "Cluster.2.GSEA", 
+                           group1_population = c("2", "Other"),
+                           pathways = pathways)
+Norm.Panc.scpa_out_cluster_3 <- compare_seurat(Olaniru.Developing.Panc.Mesenchymal.SO.integrated,
+                           group1 = "Cluster.3.GSEA", 
+                           group1_population = c("3", "Other"),
+                           pathways = pathways)
+```
+
+```{r}
+FAP.CAFs.scpa_out_cluster_0_enriched <- FAP.CAFs.scpa_out_cluster_0 %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  mutate(Cluster = "Cancer 0")
+
+FAP.CAFs.scpa_out_cluster_1_enriched <- FAP.CAFs.scpa_out_cluster_1 %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05)  %>%
+  mutate(Cluster = "Cancer 1")
+
+FAP.CAFs.scpa_out_cluster_2_enriched <- FAP.CAFs.scpa_out_cluster_2 %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  mutate(Cluster = "Cancer 2")
+
+FAP.CAFs.scpa_out_cluster_3_enriched <- FAP.CAFs.scpa_out_cluster_3 %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  mutate(Cluster = "Cancer 3")
+
+FAP.CAFs.scpa_out_cluster_4_enriched <- FAP.CAFs.scpa_out_cluster_4 %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  top_n(100, qval) %>%
+  mutate(Cluster = "Cancer 4")
+```
+
+```{r}
+Norm.Panc.scpa_out_cluster_0_enriched <- Norm.Panc.scpa_out_cluster_0 %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  mutate(Cluster = "Normal A")
+
+Norm.Panc.scpa_out_cluster_1_enriched <- Norm.Panc.scpa_out_cluster_1 %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  mutate(Cluster = "Normal B")
+
+Norm.Panc.scpa_out_cluster_2_enriched <- Norm.Panc.scpa_out_cluster_2 %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  mutate(Cluster = "Normal C")
+
+Norm.Panc.scpa_out_cluster_3_enriched <- Norm.Panc.scpa_out_cluster_3 %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  mutate(Cluster = "Normal D")
+```
+
+```{r}
+Top.Common.Norm.Cancer.Cluster.0 <- FAP.CAFs.scpa_out_cluster_0_enriched %>%
+  inner_join(Norm.Panc.scpa_out_cluster_0_enriched, by = "Pathway") %>%
+  mutate(qval.combined = (qval.x + FC.x) + (qval.y + FC.y)) %>%
+  top_n(20, qval.combined)
+
+Top.Common.Norm.Cancer.Cluster.1 <- FAP.CAFs.scpa_out_cluster_1_enriched %>%
+  inner_join(Norm.Panc.scpa_out_cluster_1_enriched, by = "Pathway") %>%
+  mutate(qval.combined = (qval.x + FC.x) + (qval.y + FC.y)) %>%
+  top_n(20, qval.combined)
+
+Top.Common.Norm.Cancer.Cluster.3 <- FAP.CAFs.scpa_out_cluster_3_enriched %>%
+  inner_join(Norm.Panc.scpa_out_cluster_3_enriched, by = "Pathway") %>%
+  mutate(qval.combined = (qval.x + FC.x) + (qval.y + FC.y)) %>%
+  top_n(20, qval.combined)
+
+Selected.Pathways <- c("REACTOME_HSF1_ACTIVATION", "REACTOME_HSF1_DEPENDENT_TRANSACTIVATION", "REACTOME_COMPLEMENT_CASCADE", "REACTOME_SIGNALING_BY_INTERLEUKINS", "HALLMARK_MYC_TARGETS_V1", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "KEGG_VASCULAR_SMOOTH_MUSCLE_CONTRACTION", "HALLMARK_MYOGENESIS", "KEGG_REGULATION_OF_ACTIN_CYTOSKELETON")
+
+Common.Norm.Cancer.Pathways <- rbind(FAP.CAFs.scpa_out_cluster_0_enriched, FAP.CAFs.scpa_out_cluster_1_enriched, FAP.CAFs.scpa_out_cluster_3_enriched, Norm.Panc.scpa_out_cluster_0_enriched, Norm.Panc.scpa_out_cluster_1_enriched, Norm.Panc.scpa_out_cluster_3_enriched)
+Common.Norm.Cancer.Pathways <- Common.Norm.Cancer.Pathways %>%
+  filter(Pathway %in% Selected.Pathways)
+
+Common.Norm.Cancer.Pathways <- Common.Norm.Cancer.Pathways %>%
+  mutate(Pathway = gsub("_", " ", Pathway))
+```
+
+# Figure S3L
+```{r}
+Fig_S3L_plot <- ggplot(Common.Norm.Cancer.Pathways, aes(x = Cluster, y = Pathway)) + 
+               geom_point(aes(color = qval, size = FC)) +
+               theme_bw(base_size =6) +
+        scale_colour_gradient(limits=c(0, 10), low="white", high = "red") +
+        #scale_size(range = c(2,8)) +
+        ylab(NULL) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1, size = 10), title = element_text(size = 12), axis.text.y = element_text(size = 10), legend.text = element_text(size = 10)) +
+  scale_x_discrete(limits = c("Cancer 0", "Normal A", "Cancer 1", "Normal B", "Cancer 3", "Normal D")) +
+  scale_y_discrete(limits = c("REACTOME HSF1 ACTIVATION", "REACTOME HSF1 DEPENDENT TRANSACTIVATION", "REACTOME COMPLEMENT CASCADE", "REACTOME SIGNALING BY INTERLEUKINS", "HALLMARK MYC TARGETS V1", "HALLMARK TNFA SIGNALING VIA NFKB", "KEGG VASCULAR SMOOTH MUSCLE CONTRACTION", "HALLMARK MYOGENESIS", "KEGG REGULATION OF ACTIN CYTOSKELETON"), labels = function(x) str_wrap(x, width = 30))
+
+if (!dir.exists("Figure_S3")) {dir.create("Figure_S3")}
+ggsave(plot = Fig_S3L_plot, "Figure_S3L_GSEA_common_cancer_normal.pdf", width = 5, height = 4.4444444, units = "in", path = "Figure_S3/")
+```
+
+
+# Plot shared differentially active transcription factors between normal and PDAC mesenchymal clusters
+```{r}
+TF.Activity.FAP.CAFs <- readRDS("TF.Activity.FAP.CAFs.rPCA.integrated.RDS")
+```
+
+```{r}
+FAP.CAFs.Cluster.0.TFs <- FindMarkers(TF.Activity.FAP.CAFs, ident.1 = "0", assay = "tfsulm", slot = "scale.data", only.pos = T)
+FAP.CAFs.Cluster.0.TFs <- FAP.CAFs.Cluster.0.TFs %>%
+  filter(p_val_adj < 0.05) %>%
+  rownames_to_column("TF")
+FAP.CAFs.Cluster.1.TFs <- FindMarkers(TF.Activity.FAP.CAFs, ident.1 = "1", assay = "tfsulm", slot = "scale.data", only.pos = T)
+FAP.CAFs.Cluster.1.TFs <- FAP.CAFs.Cluster.1.TFs %>%
+  filter(p_val_adj < 0.05)%>%
+  rownames_to_column("TF")
+FAP.CAFs.Cluster.2.TFs <- FindMarkers(TF.Activity.FAP.CAFs, ident.1 = "2", assay = "tfsulm", slot = "scale.data", only.pos = T)
+FAP.CAFs.Cluster.2.TFs <- FAP.CAFs.Cluster.2.TFs %>%
+  filter(p_val_adj < 0.05)%>%
+  rownames_to_column("TF")
+FAP.CAFs.Cluster.3.TFs <- FindMarkers(TF.Activity.FAP.CAFs, ident.1 = "3", assay = "tfsulm", slot = "scale.data", only.pos = T)
+FAP.CAFs.Cluster.3.TFs <- FAP.CAFs.Cluster.3.TFs %>%
+  filter(p_val_adj < 0.05)%>%
+  rownames_to_column("TF")
+FAP.CAFs.Cluster.4.TFs <- FindMarkers(TF.Activity.FAP.CAFs, ident.1 = "4", assay = "tfsulm", slot = "scale.data", only.pos = T)
+FAP.CAFs.Cluster.4.TFs <- FAP.CAFs.Cluster.4.TFs %>%
+  filter(p_val_adj < 0.05)%>%
+  rownames_to_column("TF")
+```
+
+```{r}
+TF.Activity.Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- readRDS("TF.Activity.Olaniru.Developing.Panc.Mesenchymal.SO.integrated.RDS")
+```
+
+```{r}
+Norm.Panc.Cluster.0.TFs <- FindMarkers(TF.Activity.Olaniru.Developing.Panc.Mesenchymal.SO.integrated, ident.1 = "0", assay = "tfsulm", slot = "scale.data", only.pos = T)
+Norm.Panc.Cluster.0.TFs <- Norm.Panc.Cluster.0.TFs %>%
+  filter(p_val_adj < 0.05) %>%
+  rownames_to_column("TF")
+Norm.Panc.Cluster.1.TFs <- FindMarkers(TF.Activity.Olaniru.Developing.Panc.Mesenchymal.SO.integrated, ident.1 = "1", assay = "tfsulm", slot = "scale.data", only.pos = T)
+Norm.Panc.Cluster.1.TFs <- Norm.Panc.Cluster.1.TFs %>%
+  filter(p_val_adj < 0.05) %>%
+  rownames_to_column("TF")
+Norm.Panc.Cluster.2.TFs <- FindMarkers(TF.Activity.Olaniru.Developing.Panc.Mesenchymal.SO.integrated, ident.1 = "2", assay = "tfsulm", slot = "scale.data", only.pos = T)
+Norm.Panc.Cluster.2.TFs <- Norm.Panc.Cluster.2.TFs %>%
+  filter(p_val_adj < 0.05) %>%
+  rownames_to_column("TF")
+Norm.Panc.Cluster.3.TFs <- FindMarkers(TF.Activity.Olaniru.Developing.Panc.Mesenchymal.SO.integrated, ident.1 = "3", assay = "tfsulm", slot = "scale.data", only.pos = T)
+Norm.Panc.Cluster.3.TFs <- Norm.Panc.Cluster.3.TFs %>%
+  filter(p_val_adj < 0.05) %>%
+  rownames_to_column("TF")
+```
+
+```{r}
+Common.Cancer.0.Normal.A.TFs <- FAP.CAFs.Cluster.0.TFs %>%
+  left_join(Norm.Panc.Cluster.0.TFs, by = "TF") %>%
+  mutate(combined.enrichment = avg_diff.x + avg_diff.y) %>%
+  top_n(5, combined.enrichment)
+
+Common.Cancer.1.Normal.B.TFs <- FAP.CAFs.Cluster.1.TFs %>%
+  left_join(Norm.Panc.Cluster.1.TFs, by = "TF") %>%
+  mutate(combined.enrichment = avg_diff.x + avg_diff.y) %>%
+  top_n(5, combined.enrichment)
+
+Common.Cancer.3.Normal.D.TFs <- FAP.CAFs.Cluster.3.TFs %>%
+  left_join(Norm.Panc.Cluster.3.TFs, by = "TF") %>%
+  mutate(combined.enrichment = avg_diff.x + avg_diff.y) %>%
+  top_n(5, combined.enrichment)
+```
+
+```{r}
+TF.Activity.FAP.CAFs@meta.data <- FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated@meta.data
+
+# Extract activities from object as a long dataframe
+TF.Activity.df.FAP.CAFs <- t(as.matrix(TF.Activity.FAP.CAFs@assays$tfsulm@scale.data)) %>%
+  as.data.frame() %>%
+  mutate(Cluster = TF.Activity.FAP.CAFs@meta.data$integrated_snn_res.0.1) %>%
+  pivot_longer(cols = -Cluster, names_to = "source", values_to = "score") %>%
+  group_by(Cluster, source) %>%
+  summarise(mean = mean(score)) %>%
+  mutate(Cluster = paste("Cancer", Cluster, sep = " "))
+```
+
+```{r}
+TF.Activity.Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data <- Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data
+
+# Extract activities from object as a long dataframe
+TF.Activity.df.Norm.Panc <- t(as.matrix(TF.Activity.Olaniru.Developing.Panc.Mesenchymal.SO.integrated@assays$tfsulm@scale.data)) %>%
+  as.data.frame() %>%
+  mutate(Cluster = TF.Activity.Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data$Cluster_labels) %>%
+  pivot_longer(cols = -Cluster, names_to = "source", values_to = "score") %>%
+  group_by(Cluster, source) %>%
+  summarise(mean = mean(score)) %>%
+  mutate(Cluster = paste("Normal", Cluster, sep = " "))
+```
+
+```{r}
+Selected.TFs <- c(Common.Cancer.0.Normal.A.TFs$TF, Common.Cancer.1.Normal.B.TFs$TF, Common.Cancer.3.Normal.D.TFs$TF)
+
+TF.Activity.df.Norm.Cancer <- rbind(TF.Activity.df.Norm.Panc, TF.Activity.df.FAP.CAFs)
+
+Selected.TF.Activity.Norm.Cancer<- TF.Activity.df.Norm.Cancer %>%
+  filter(source %in% Selected.TFs) %>%
+  spread(key = Cluster, value = mean) %>%
+  column_to_rownames("source") %>%
+  select("Cancer 0", "Normal A", "Cancer 1", "Normal B", "Cancer 3", "Normal D")
+Selected.TF.Activity.Norm.Cancer <- Selected.TF.Activity.Norm.Cancer[order(match(rownames(Selected.TF.Activity.Norm.Cancer), Selected.TFs)), , drop = FALSE]
+```
+
+```{r}
+breaksList = seq(-1.5, 1.5, by = 0.1)
+pheatmap(Selected.TF.Activity.Norm.Cancer, breaks = breaksList, cluster_rows = F, cluster_cols = F, color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(length(breaksList)))
+```
+
+# Figure S3M
+```{r}
+breaksList = seq(-1.5, 1.5, by = 0.1)
+Fig_S3M_plot <- pheatmap(Selected.TF.Activity.Norm.Cancer, breaks = breaksList, cluster_rows = F, cluster_cols = F, color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(length(breaksList)))
+
+if (!dir.exists("Figure_S3")) {dir.create("Figure_S3")}
+ggsave(plot = Fig_S3M_plot, "Figure_S3M_TF_Activity_common_cancer_normal.pdf", width = 5, height = 4.4444444, units = "in", path = "Figure_S3/")
+```
+
+
+# Subsetting of CAF clusters
+The clusters corresponding to CAFs are extracted for analysis depicted in Figure 2
+```{r}
+CAFs <- subset(FAP.Mesenchymal.Souped.Singlets.rPCA.Integrated, idents = c("0", "1", "2"))
+saveRDS(CAFs, "CAFs.rPCA.integrated.RDS")
+```

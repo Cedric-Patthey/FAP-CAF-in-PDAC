@@ -1,0 +1,1357 @@
+---
+title: "CAF.6S.Souped.Singlets.rPCA.Integrated"
+author: "Joshua"
+date: '2022-11-17'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Summary
+The following code describes the analysis of single cell RNAseq data from 6 human PDAC samples. This code was used to produce figures 2 and S4 and S5 of Cumming et al, 2025. 
+
+The generation of the Seurat object `CAFs.rPCA.integrated.RDS` used as input in the present code is described in R markdown `Figure_1_&_2_Pre_Processing.Rmd`. The files are available on SND at https://doi.org/10.5878/0ehq-1434.
+
+The generation of Seurat objects `Olaniru.Developing.Panc.Mesenchymal.SO.integrated.RDS` and `Peng.Peng.Peng.Mesenchymal.Cells.rPCA.integrated` from publically available datasets is described in R markdown `Figure_1_&_2_Pre_Processing.Rmd`.
+
+```{r}
+library(Seurat)  # version 4.1.0
+library(tidyverse)
+library(svglite)
+library(clustree)  # version 0.4.4
+library(pheatmap)  # version 1.0.12
+library(RColorBrewer)
+library(enrichR)
+library(SCPA)  # version 1.5.3
+library(msigdbr)  # version 7.5.1
+library(Matrix)
+library(usefun)
+library(stringr)
+library(forcats)
+library(enrichplot)  # version 1.14.2
+library(SeuratWrappers)
+library(cowplot)
+library(dittoSeq)
+```
+
+
+# Figure 2
+cells from CAF clusters are re-clustered
+```{r}
+  CAFs <- readRDS("CAFs.rPCA.integrated.RDS")
+  DefaultAssay(CAFs) <- "RNA"
+  CAFs <- FindVariableFeatures(CAFs, selection.method = "vst", nfeatures = 3000)
+  DefaultAssay(CAFs) <- "integrated"
+  CAFs <- ScaleData(CAFs, verbose = FALSE)
+  CAFs <- RunPCA(CAFs, npcs = 50, verbose = FALSE)
+   ElbowPlot(CAFs, ndims = 50)
+  # Determine percent of variation associated with each PC
+  pct <- CAFs@reductions$pca@stdev / sum(CAFs@reductions$pca@stdev) * 100
+  # Determine the difference between variation of PC and subsequent PC
+  co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1),  decreasing = T)[1] + 1 # last point    where change of % of varia8tion is more than 0.1%.
+  CAFs <- RunUMAP(CAFs, reduction = "pca", dims = 1:17)
+  CAFs <- FindNeighbors(CAFs, reduction = "pca", dims = 1:17)
+  CAFs <- FindClusters(CAFs, resolution = 0.6)
+  DimPlot(CAFs, reduction = "umap", label = T, pt.size = 1)
+```
+
+```{r}
+CAFs.Cluster.0.Markers <- FindMarkers(CAFs, ident.1 = "0", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+CAFs.Cluster.0.Markers <- CAFs.Cluster.0.Markers %>%
+  filter(p_val_adj < 0.05)
+CAFs.Cluster.1.Markers <- FindMarkers(CAFs, ident.1 = "1", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+CAFs.Cluster.1.Markers <- CAFs.Cluster.1.Markers %>%
+  filter(p_val_adj < 0.05)
+CAFs.Cluster.2.Markers <- FindMarkers(CAFs, ident.1 = "2", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+CAFs.Cluster.2.Markers <- CAFs.Cluster.2.Markers %>%
+  filter(p_val_adj < 0.05)
+CAFs.Cluster.3.Markers <- FindMarkers(CAFs, ident.1 = "3", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+CAFs.Cluster.3.Markers <- CAFs.Cluster.3.Markers %>%
+  filter(p_val_adj < 0.05)
+CAFs.Cluster.4.Markers <- FindMarkers(CAFs, ident.1 = "4", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+CAFs.Cluster.4.Markers <- CAFs.Cluster.4.Markers %>%
+  filter(p_val_adj < 0.05)
+CAFs.Cluster.5.Markers <- FindMarkers(CAFs, ident.1 = "5", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+CAFs.Cluster.5.Markers <- CAFs.Cluster.5.Markers %>%
+  filter(p_val_adj < 0.05)
+CAFs.Cluster.6.Markers <- FindMarkers(CAFs, ident.1 = "6", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+CAFs.Cluster.6.Markers <- CAFs.Cluster.6.Markers %>%
+  filter(p_val_adj < 0.05)
+CAFs.Cluster.7.Markers <- FindMarkers(CAFs, ident.1 = "7", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+CAFs.Cluster.7.Markers <- CAFs.Cluster.7.Markers %>%
+  filter(p_val_adj < 0.05)
+CAFs.Cluster.8.Markers <- FindMarkers(CAFs, ident.1 = "8", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+CAFs.Cluster.8.Markers <- CAFs.Cluster.8.Markers %>%
+  filter(p_val_adj < 0.05)
+CAFs.Cluster.9.Markers <- FindMarkers(CAFs, ident.1 = "9", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+CAFs.Cluster.9.Markers <- CAFs.Cluster.9.Markers %>%
+  filter(p_val_adj < 0.05)
+CAFs.Cluster.10.Markers <- FindMarkers(CAFs, ident.1 = "10", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+CAFs.Cluster.10.Markers <- CAFs.Cluster.10.Markers %>%
+  filter(p_val_adj < 0.05)
+CAFs.Cluster.11.Markers <- FindMarkers(CAFs, ident.1 = "11", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+CAFs.Cluster.11.Markers <- CAFs.Cluster.11.Markers %>%
+  filter(p_val_adj < 0.05)
+CAFs.Cluster.12.Markers <- FindMarkers(CAFs, ident.1 = "12", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+CAFs.Cluster.12.Markers <- CAFs.Cluster.12.Markers %>%
+  filter(p_val_adj < 0.05)
+CAFs.Cluster.13.Markers <- FindMarkers(CAFs, ident.1 = "13", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+CAFs.Cluster.13.Markers <- CAFs.Cluster.13.Markers %>%
+  filter(p_val_adj < 0.05)
+CAFs.Cluster.14.Markers <- FindMarkers(CAFs, ident.1 = "14", assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+CAFs.Cluster.14.Markers <- CAFs.Cluster.14.Markers %>%
+  filter(p_val_adj < 0.05)
+```
+
+```{r}
+CAFs@meta.data <- CAFs@meta.data %>%
+  mutate(Annotation = case_when(
+    integrated_snn_res.0.6 == "0" ~ "LRRC15+ myCAFs",
+    integrated_snn_res.0.6 == "1" ~ "WT1+ iCAFs",
+    integrated_snn_res.0.6 == "2" ~ "ENG+ iCAFs",
+    integrated_snn_res.0.6 == "3" ~ "ENG+ iCAFs",
+    integrated_snn_res.0.6 == "4" ~ "ENG+ myCAFs",
+    integrated_snn_res.0.6 == "5" ~ "WT1+ iCAFs",
+    integrated_snn_res.0.6 == "6" ~ "LRRC15+ myCAFs",
+    integrated_snn_res.0.6 == "7" ~ "ENG+ myCAFs",
+    integrated_snn_res.0.6 == "8" ~ "WT1+ iCAFs",
+    integrated_snn_res.0.6 == "9" ~ "ENG+ iCAFs",
+    integrated_snn_res.0.6 == "10" ~ "VEGFA+ CAFs",
+    integrated_snn_res.0.6 == "11" ~ "CAP-like CAFs",
+    integrated_snn_res.0.6 == "12" ~ "PI16+ CAFs",
+    integrated_snn_res.0.6 == "13" ~ "ifCAFs",
+    integrated_snn_res.0.6 == "14" ~ "WT1+ CAFs"
+  ))
+```
+
+```{r}
+#write.table(CAFs@meta.data, "CAFs.Meta.Data.txt", sep = "\t")
+```
+
+# "0" = "LRRC15+ myCAFs 1", "1" = "WT1+ iCAFs 1", "2" = "ENG+ iCAFs 1", "3" = "ENG+ iCAFs 2", "4" = "ENG+ myCAFs 1", "5" = "WT1+ iCAFs 2", "6" = "LRRC15+ myCAFs 2", "7" = "ENG+ myCAFs 2", "8" = "WT1+ iCAFs 3", "9" = "ENG+ iCAFs 3", "10" = "VEGFA+ CAFs", "11" = "CAP-like CAFs", "12" = "PI16+ CAFs", "13" = "ifCAFs", "14" = "WT1+ CAFs"
+```{r}
+CAFs@active.ident <- factor(x = CAFs@active.ident, levels = c('0', '6', '4', '7', '2', '3', '9', '1', '5', '8', '14', '10', '12', '11', '13'))
+```
+
+```{r}
+WT1.iCAF.markers <- FindMarkers(CAFs, ident.1 = c("1", "5", "8"), assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+ENG.iCAF.markers <- FindMarkers(CAFs, ident.1 = c("2", "3", "9"), assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+ENG.myCAF.markers <- FindMarkers(CAFs, ident.1 = c("4", "7"), assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+LRRC15.myCAF.markers <- FindMarkers(CAFs, ident.1 = c("0", "6"), assay = "RNA", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+```
+
+# Figure 2A
+```{r}
+Fig_2A_plot <- DimPlot(CAFs, reduction = "umap", label = T, pt.size = 1)
+
+if (!dir.exists("Figure_2")) {dir.create("Figure_2")}
+ggsave(plot = Fig_2A_plot, "Figure_2A_UMAP.pdf", width = 7.5*0.8, height = 4.4444444, units = "in", path = "Figure_2/")
+```
+
+#Figure 2B
+```{r}
+Fig_2B_plot <- DotPlot(object = CAFs, assay = "RNA", features = c("LRRC15", "ENG", "WT1", "VEGFA", "PI16", "MYH11", "RSAD2"), cols = c("white", "blue"), col.min = 0, col.max = 2) + theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+if (!dir.exists("Figure_2")) {dir.create("Figure_2")}
+ggsave(plot = Fig_2B_plot, "Figure_2B_Dot_Plot.pdf", width = 3.75*1.5, height = 4.4444444*1.5, units = "in", path = "Figure_2/")
+```
+
+# Figure 2Ca
+```{r}
+Fig_2Ca_plot <- VlnPlot(CAFs, features =  c("POSTN", "HOPX", "COL10A1", "ACTA2"), assay = "RNA", pt.size = 0, stack = T, flip = T, fill.by = "ident") + NoLegend() + theme(axis.text.x = element_text(angle = 90, hjust=1))
+
+if (!dir.exists("Figure_2")) {dir.create("Figure_2")}
+ggsave(plot = Fig_2Ca_plot, "Figure_2C_Stacked_VLN_myCAF_markers.pdf", width = 7.5, height = 4.4444444, units = "in", path = "Figure_2/")
+```
+
+# Figure 2Cb
+```{r}
+Fig_2Cb_plot <- VlnPlot(CAFs, features =  c("PTGDS", "IL6ST", "C3", "NFKBIA"), assay = "RNA", pt.size = 0, stack = T, flip = T, fill.by = "ident") + NoLegend() + theme(axis.text.x = element_text(angle = 90, hjust=1))
+
+if (!dir.exists("Figure_2")) {dir.create("Figure_2")}
+ggsave(plot = Fig_2Cb_plot, "Figure_2C_Stacked_VLN_iCAF_markers.pdf", width = 7.5, height = 4.4444444, units = "in", path = "Figure_2/")
+```
+
+# Plot previously defined iCAF and myCAF signatures on CAFs
+```{r}
+plot_two_Zs_Selected_Cluster_Average<-function(in_sign1, in_sign2, plot_SO, x_lab_sign1_name="sign 1 Z score", y_lab_sign2_name="sign 2 Z score", selected_clusters = c("list of clusters"), title = "title", meta.data.clusters = "meta data clusters", xlim, ylim){
+  DefaultAssay(plot_SO) <- "RNA"
+  #verifies the genes are part of the seurat object
+  in_sign1<-in_sign1[in_sign1 %in% rownames(plot_SO)]
+  in_sign2<-in_sign2[in_sign2 %in% rownames(plot_SO)]
+  
+  # Genes which are 0 in >95% of cells are removed
+  long_NC_sig1 <- plot_SO@assays$RNA@data[in_sign1,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) %>% 
+    group_by(Gene) %>% 
+    summarise(prop_zeros = sum(NC == 0)/n()) %>% 
+    filter(prop_zeros <= 0.95) %>% 
+    select(-prop_zeros)
+    
+  # NC is extracted from the SO
+    long_NC_sig1 <- plot_SO@assays$RNA@data[long_NC_sig1$Gene,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) 
+  
+  #Repeat for sig 2
+    long_NC_sig2 <- plot_SO@assays$RNA@data[in_sign2,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) %>% 
+    group_by(Gene) %>% 
+    summarise(prop_zeros = sum(NC == 0)/n()) %>% 
+    filter(prop_zeros <= 0.95) %>% 
+    select(-prop_zeros)
+    
+    long_NC_sig2 <- plot_SO@assays$RNA@data[long_NC_sig2$Gene,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene)
+  
+  # Signature scores are calculated for each cell
+  cell_sign1_scores <- long_NC_sig1 %>%
+    group_by(Gene) %>%  # added
+    mutate(Z = (NC - mean(NC)) / sd(NC)) %>% drop_na() %>% 
+    group_by(Cell) %>%
+    summarise(sign1_Z = mean(Z) %>% round(2))
+
+  cell_sign2_scores <- long_NC_sig2 %>%
+    group_by(Gene) %>%  # added
+    mutate(Z = (NC - mean(NC)) / sd(NC)) %>% drop_na() %>% 
+    group_by(Cell) %>%
+    summarise(sign2_Z = mean(Z) %>% round(2))
+  
+  Cluster.IDs <- plot_SO@meta.data %>%
+    select(meta.data.clusters) %>%
+    rename("Cluster" = meta.data.clusters) %>%
+    rownames_to_column("Cell")
+  
+  cluster_sign1_scores <- cell_sign1_scores %>%
+    left_join(Cluster.IDs, by = "Cell") %>%
+    group_by(Cluster) %>%
+    summarise(mean_sign1 = mean(sign1_Z),
+            sd_sign1 = sd(sign1_Z))
+  
+  cluster_sign2_scores <- cell_sign2_scores %>%
+    left_join(Cluster.IDs, by = "Cell") %>%
+    group_by(Cluster) %>%
+    summarise(mean_sign2 = mean(sign2_Z),
+            sd_sign2 = sd(sign2_Z))
+  
+  cluster_scores <- cluster_sign1_scores %>%
+    left_join(cluster_sign2_scores, by = "Cluster") %>%
+    filter(Cluster %in% selected_clusters)
+  
+
+  
+  p <- ggplot(cluster_scores, aes(x = mean_sign1, y = mean_sign2, color = Cluster)) +
+  geom_point(size = 8) +
+  labs(x = x_lab_sign1_name, y = y_lab_sign2_name) +
+  ggtitle(title) +
+  geom_hline(yintercept=0) + 
+  geom_vline(xintercept=0) + 
+  xlim +
+  ylim +
+  theme_bw() + 
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),    
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank(), plot.title = element_text(hjust = 0.5)) 
+  
+  
+  return(p)
+  
+}
+```
+
+Signatures by Elyada and Wang are loaded
+```{r}
+Elyada.iCAF.Signature<-c("C3", "DUSP1", "FBLN1", "LMNA", "CLU", "CCDC80", "MYC", "EFEMP1", "HAS1", "NR4A1", "CFD", "ANXA1", "CXCL12", "FGF7", "KLF4", "EMP1", "GPRC5A", "SRPX", "MT2A", "MEDAG", "IGF1", "MGST1", "MCL1", "CEBPD", "S100A10", "UAP1", "TNXB", "CEBPB", "PNRC1", "SOCS3", "PTGDS", "FOSB", "NFKBIA", "CXCL2", "THBS1", "CCL2", "OGN", "GSN", "DPT", "PLA2G2A", "NAMPT", "ITM2A", "RGCC", "JUND", "NNMT", "ZFP36", "PIM1", "CPE", "GFPT2", "SOD2", "KDM6B", "FSTL1", "FBLN2", "NR4A3", "MFAP5", "ABL2", "SGK1", "CILP", "UGDH", "FBLN5", "ADAMTS1", "ADH1B", "WISP2", "GPX3", "S100A4", "IL6", "HAS2", "PLAC9", "IGFBP6", "FBN1", "BDKRB1", "TPPP3", "RASD1", "MT1A", "CXCL14", "PI16", "APOE", "IL8", "ARC", "PTX3", "TNFAIP6", "MT1E", "MT1X", "CXCL1")
+
+Elyada.myCAF.Signature<-c("MYL9", "CALD1", "MMP11", "HOPX", "BGN", "IGFBP7", "TPM2", "CTHRC1", "ACTA2", "TAGLN", "INHBA", "COL10A1", "TPM1", "POSTN", "GRP", "CST1")
+
+Wang.iCAF.Signature<-c("APOD", "PTGDS", "C7", "C3", "MGP", "FBLN1", "C1S", "DCN", "LUM", "C1R", "CST3", "GSN", "FBLN5", "SERPINF1", "SFRP2", "MFAP4", "TSHZ2", "MMP2", "SELENOP", "CYBRD1", "PRELP", "GPNMB", "SCN7A", "CYR61", "ALDH1A1", "SFRP4", "CTGF")
+
+Wang.myCAF.Signature<-c("MMP11", "FN1", "POSTN", "CTHRC1", "COL10A1", "COL11A1", "COL1A1", "COL1A2", "IGFL2", "INHBA", "IGFBP3", "RARRES2", "THBS2", "CST1", "MMP14", "SULF1", "CXCL14", "COL3A1", "VCAN", "AEBP1", "COL6A3", "HTRA1", "LGALS1", "COL5A2", "GJB2", "CTSK", "COL12A1", "RGS16", "SOX4", "LUM", "TMSB10", "C1QTNF3", "HOPX", "COL8A1")
+```
+
+# Reminder or annotations and method to set colours
+"0" = "LRRC15+ myCAFs 1", "1" = "WT1+ iCAFs 1", "2" = "ENG+ iCAFs 1", "3" = "ENG+ iCAFs 2", "4" = "ENG+ myCAFs 1", "5" = "WT1+ iCAFs 2", "6" = "LRRC15+ myCAFs 2", "7" = "ENG+ myCAFs 2", "8" = "WT1+ iCAFs 3", "9" = "ENG+ iCAFs 3", "10" = "VEGFA+ CAFs", "11" = "CAP-like CAFs", "12" = "PI16+ CAFs", "13" = "ifCAFs", "14" = "WT1+ CAFs"
+```{r}
+ggplotColours <- function(n = 6, h = c(0, 360) + 15){
+  if ((diff(h) %% 360) < 1) h[2] <- h[2] - 360/n
+  hcl(h = (seq(h[1], h[2], length = n)), c = 100, l = 65)
+}
+
+color_list <- ggplotColours(n=15)
+
+color_list <- c("#F8766D", "#00C0AF", "#6BB100", "#00BA38", "#C99800", "#00BCD8", "#E58700", "#A3A500", "#00B0F6", "#00BF7D", "#B983FF", "#FD61D1", "#E76BF3", "#FF67A4", "#619CFF")
+```
+
+```{r}
+p1 <- plot_two_Zs_Selected_Cluster_Average(Elyada.iCAF.Signature, Wang.iCAF.Signature, CAFs, x_lab_sign1_name="Elyada et al 2019, iCAF Signature Z-Score", y_lab_sign2_name="Wang et al 2021, iCAF Signature Z-Score", selected_clusters = c("0", "1", "2", "3", "4", "5", "6", "7", "8", "9"), title = "", meta.data.clusters = "integrated_snn_res.0.6", xlim = xlim(-0.5, 1), ylim = ylim(-0.75, 1)) + scale_color_manual(values=c("#F8766D", "#00C0AF", "#6BB100", "#00BA38", "#C99800", "#00BCD8", "#E58700", "#A3A500", "#00B0F6", "#00BF7D")) + NoLegend()
+
+
+p2 <- plot_two_Zs_Selected_Cluster_Average(Elyada.myCAF.Signature, Wang.myCAF.Signature, CAFs, x_lab_sign1_name="Elyada et al 2019, myCAF Signature Z-Score", y_lab_sign2_name="Wang et al 2021, myCAF Signature Z-Score", selected_clusters = c("0", "1", "2", "3", "4", "5", "6", "7", "8", "9"), title = "", meta.data.clusters = "integrated_snn_res.0.6", xlim = xlim(-1, 1), ylim = ylim(-0.75, 1)) + scale_color_manual(values=c("#F8766D", "#00C0AF", "#6BB100", "#00BA38", "#C99800", "#00BCD8", "#E58700", "#A3A500", "#00B0F6", "#00BF7D")) + NoLegend()
+```
+
+# Figure 2D & E
+```{r}
+Fig_2DE_plot <- plot_grid(p1, p2, nrow = 1)
+
+if (!dir.exists("Figure_2")) {dir.create("Figure_2")}
+ggsave(plot = Fig_2DE_plot, "Figure_2D_E_Cluster_Sig_Scores_iCAF_myCAF.pdf", width = 7.5*1.25, height = 4.4444444*1.25, units = "in", path = "Figure_2/")
+```
+
+
+# Differentially active transcription factors in CAFs
+Differential transcription factor activity is assessed with DecoupleR during pre-processing. 
+The input Seurat object `TF.Activity.FAP.CAFs.rPCA.integrated.RDS` was generated as described in R markdown `Figure_1_&_2_Pre_Processing.Rmd`
+```{r}
+TF.Activity.FAP.CAFs <- readRDS("TF.Activity.FAP.CAFs.rPCA.integrated.RDS")
+TF.Activity.CAFs <- subset(TF.Activity.FAP.CAFs, idents = c("0", "1", "2"))
+  DefaultAssay(TF.Activity.CAFs) <- "tfsulm"
+  TF.Activity.CAFs@active.ident <- CAFs@active.ident
+  TF.Activity.CAFs <- ScaleData(TF.Activity.CAFs, verbose = FALSE)
+```
+
+```{r}
+TF.Activity.CAFs@active.ident <- factor(x = TF.Activity.CAFs@active.ident, levels = c('0', '6', '4', '7', '2', '3', '9', '1', '5', '8', '14', '13','10', '12', '11'))
+```
+
+```{r}
+TF.Activity.CAFs@meta.data <- TF.Activity.CAFs@meta.data %>%
+  mutate(iCAF.myCAF.subtype = case_when(
+    CAFs@active.ident == "0" ~ "LRRC15+ myCAFs",
+    CAFs@active.ident == "6" ~ "LRRC15+ myCAFs",
+    CAFs@active.ident == "4" ~ "ENG+ myCAFs",
+    CAFs@active.ident == "7" ~ "ENG+ myCAFs",
+    CAFs@active.ident == "2" ~ "ENG+ iCAFs",
+    CAFs@active.ident == "3" ~ "ENG+ iCAFs",
+    CAFs@active.ident == "9" ~ "ENG+ iCAFs",
+    CAFs@active.ident == "1" ~ "WT1+ iCAFs",
+    CAFs@active.ident == "5" ~ "WT1+ iCAFs",
+    CAFs@active.ident == "8" ~ "WT1+ iCAFs",
+    CAFs@active.ident == "10" ~ "Other",
+    CAFs@active.ident == "11" ~ "Other",
+    CAFs@active.ident == "12" ~ "Other",
+    CAFs@active.ident == "13" ~ "Other",
+    CAFs@active.ident == "14" ~ "Other",
+  )) %>%
+  mutate(iCAF.myCAF = case_when(
+    CAFs@active.ident == "0" ~ "myCAFs",
+    CAFs@active.ident == "6" ~ "myCAFs",
+    CAFs@active.ident == "4" ~ "myCAFs",
+    CAFs@active.ident == "7" ~ "myCAFs",
+    CAFs@active.ident == "2" ~ "iCAFs",
+    CAFs@active.ident == "3" ~ "iCAFs",
+    CAFs@active.ident == "9" ~ "iCAFs",
+    CAFs@active.ident == "1" ~ "iCAFs",
+    CAFs@active.ident == "5" ~ "iCAFs",
+    CAFs@active.ident == "8" ~ "iCAFs",
+    CAFs@active.ident == "10" ~ "Other",
+    CAFs@active.ident == "11" ~ "Other",
+    CAFs@active.ident == "12" ~ "Other",
+    CAFs@active.ident == "13" ~ "Other",
+    CAFs@active.ident == "14" ~ "Other",
+  ))
+
+# Extract activities from object as a long dataframe
+TF.Activity.df.iCAFs.myCAFs.subtype <- t(as.matrix(TF.Activity.CAFs@assays$tfsulm@scale.data)) %>%
+  as.data.frame() %>%
+  mutate(iCAF.myCAF.subtype = TF.Activity.CAFs@meta.data$iCAF.myCAF.subtype) %>%
+  filter(iCAF.myCAF.subtype %in% c("LRRC15+ myCAFs", "ENG+ myCAFs", "ENG+ iCAFs", "WT1+ iCAFs")) %>%
+  pivot_longer(cols = -iCAF.myCAF.subtype, names_to = "source", values_to = "score") %>%
+  group_by(iCAF.myCAF.subtype, source) %>%
+  summarise(mean = mean(score))
+
+# TFs with biological relevance in CAFs
+Selected.TFs <- c("SMAD3", "SMAD4", "GLI1", "GLI2", "NFKB1", "STAT3", "HIF1A")
+
+```
+
+
+```{r}
+iCAFs.myCAFs.Selected.TF.Activity<- TF.Activity.df.iCAFs.myCAFs.subtype %>%
+  filter(source %in% Selected.TFs) %>%
+  spread(key = iCAF.myCAF.subtype, value = mean) %>%
+  column_to_rownames("source") %>%
+  select(c("LRRC15+ myCAFs", "ENG+ myCAFs", "ENG+ iCAFs", "WT1+ iCAFs"))
+iCAFs.myCAFs.Selected.TF.Activity <- iCAFs.myCAFs.Selected.TF.Activity[order(match(rownames(iCAFs.myCAFs.Selected.TF.Activity), Selected.TFs)), , drop = FALSE]
+```
+
+#Figure 2F
+```{r}
+breaksList = seq(-1.5, 1.5, by = 0.1)
+Fig_2F_plot <- pheatmap(iCAFs.myCAFs.Selected.TF.Activity, breaks = breaksList, cluster_rows = F, cluster_cols = F, color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(length(breaksList)))
+
+if (!dir.exists("Figure_2")) {dir.create("Figure_2")}
+ggsave(plot = Fig_2F_plot, "Figure_2F_selected_TF_Heatmap.pdf", width = 7.5*0.8, height = 4.4444444*0.8, units = "in", path = "Figure_2/")
+```
+
+# Run GSEA for iCAF and myCAF subtypes
+```{r}
+CAFs@meta.data <- CAFs@meta.data %>%
+  mutate(CAF_Subtype = case_when(
+    integrated_snn_res.0.6 == "0" ~ "LRRC15+ myCAFs 1",
+    integrated_snn_res.0.6 == "1" ~ "WT1+ iCAFs 1",
+    integrated_snn_res.0.6 == "2" ~ "ENG+ iCAFs 1",
+    integrated_snn_res.0.6 == "3" ~ "ENG+ iCAFs 2",
+    integrated_snn_res.0.6 == "4" ~ "ENG+ myCAFs 1",
+    integrated_snn_res.0.6 == "5" ~ "WT1+ iCAFs 2",
+    integrated_snn_res.0.6 == "6" ~ "LRRC15+ myCAFs 3",
+    integrated_snn_res.0.6 == "7" ~ "ENG+ myCAFs 2",
+    integrated_snn_res.0.6 == "8" ~ "WT1+ iCAFs 3",
+    integrated_snn_res.0.6 == "9" ~ "ENG+ iCAFs 3",
+    integrated_snn_res.0.6 == "10" ~ "VEGFA+ CAFs",
+    integrated_snn_res.0.6 == "11" ~ "CAP-like CAFs",
+    integrated_snn_res.0.6 == "12" ~ "PI16+ CAFs",
+    integrated_snn_res.0.6 == "13" ~ "ifCAFs",
+    integrated_snn_res.0.6 == "14" ~ "WT1+ CAFs"
+  ))
+
+CAFs@meta.data <- CAFs@meta.data %>%
+  mutate(GSEA.LRRC15.myCAFs = case_when(
+    CAF_Subtype == "LRRC15+ myCAFs 1" ~ "LRRC15+ myCAFs",
+    CAF_Subtype == "LRRC15+ myCAFs 2" ~ "LRRC15+ myCAFs",
+    CAF_Subtype == "ENG+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ CAFs" ~ "Other",
+    CAF_Subtype == "ifCAFs" ~ "Other",
+    CAF_Subtype == "VEGFA+ CAFs" ~ "Other",
+    CAF_Subtype == "PI16+ CAFs" ~ "Other",
+    CAF_Subtype == "CAP-like CAFs" ~ "Other",)
+  )
+CAFs@meta.data <- CAFs@meta.data %>%
+  mutate(GSEA.ENG.myCAFs = case_when(
+    CAF_Subtype == "LRRC15+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "LRRC15+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 1" ~ "ENG+ myCAFs",
+    CAF_Subtype == "ENG+ myCAFs 2" ~ "ENG+ myCAFs",
+    CAF_Subtype == "ENG+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ CAFs" ~ "Other",
+    CAF_Subtype == "ifCAFs" ~ "Other",
+    CAF_Subtype == "VEGFA+ CAFs" ~ "Other",
+    CAF_Subtype == "PI16+ CAFs" ~ "Other",
+    CAF_Subtype == "CAP-like CAFs" ~ "Other",)
+  )
+CAFs@meta.data <- CAFs@meta.data %>%
+  mutate(GSEA.ENG.iCAFs = case_when(
+    CAF_Subtype == "LRRC15+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "LRRC15+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 1" ~ "ENG+ iCAFs",
+    CAF_Subtype == "ENG+ iCAFs 2" ~ "ENG+ iCAFs",
+    CAF_Subtype == "ENG+ iCAFs 3" ~ "ENG+ iCAFs",
+    CAF_Subtype == "WT1+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ CAFs" ~ "Other",
+    CAF_Subtype == "ifCAFs" ~ "Other",
+    CAF_Subtype == "VEGFA+ CAFs" ~ "Other",
+    CAF_Subtype == "PI16+ CAFs" ~ "Other",
+    CAF_Subtype == "CAP-like CAFs" ~ "Other",)
+  )
+CAFs@meta.data <- CAFs@meta.data %>%
+  mutate(GSEA.WT.iCAFs = case_when(
+    CAF_Subtype == "LRRC15+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "LRRC15+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 1" ~ "WT1+ iCAFs",
+    CAF_Subtype == "WT1+ iCAFs 2" ~ "WT1+ iCAFs",
+    CAF_Subtype == "WT1+ iCAFs 3" ~ "WT1+ iCAFs",
+    CAF_Subtype == "WT1+ CAFs" ~ "Other",
+    CAF_Subtype == "ifCAFs" ~ "Other",
+    CAF_Subtype == "VEGFA+ CAFs" ~ "Other",
+    CAF_Subtype == "PI16+ CAFs" ~ "Other",
+    CAF_Subtype == "CAP-like CAFs" ~ "Other",)
+  )
+CAFs@meta.data <- CAFs@meta.data %>%
+  mutate(GSEA.WT.CAFs = case_when(
+    CAF_Subtype == "LRRC15+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "LRRC15+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ CAFs" ~ "WT1+ CAFs",
+    CAF_Subtype == "ifCAFs" ~ "Other",
+    CAF_Subtype == "VEGFA+ CAFs" ~ "Other",
+    CAF_Subtype == "PI16+ CAFs" ~ "Other",
+    CAF_Subtype == "CAP-like CAFs" ~ "Other",)
+  )
+CAFs@meta.data <- CAFs@meta.data %>%
+  mutate(GSEA.ifCAFs = case_when(
+    CAF_Subtype == "LRRC15+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "LRRC15+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ CAFs" ~ "Other",
+    CAF_Subtype == "ifCAFs" ~ "ifCAFs",
+    CAF_Subtype == "VEGFA+ CAFs" ~ "Other",
+    CAF_Subtype == "PI16+ CAFs" ~ "Other",
+    CAF_Subtype == "CAP-like CAFs" ~ "Other",)
+  )
+CAFs@meta.data <- CAFs@meta.data %>%
+  mutate(GSEA.VEGFA.CAFs = case_when(
+    CAF_Subtype == "LRRC15+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "LRRC15+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ CAFs" ~ "Other",
+    CAF_Subtype == "ifCAFs" ~ "Other",
+    CAF_Subtype == "VEGFA+ CAFs" ~ "VEGFA+ CAFs",
+    CAF_Subtype == "PI16+ CAFs" ~ "Other",
+    CAF_Subtype == "CAP-like CAFs" ~ "Other",)
+  )
+CAFs@meta.data <- CAFs@meta.data %>%
+  mutate(GSEA.PI16.CAFs = case_when(
+    CAF_Subtype == "LRRC15+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "LRRC15+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ CAFs" ~ "Other",
+    CAF_Subtype == "ifCAFs" ~ "Other",
+    CAF_Subtype == "VEGFA+ CAFs" ~ "Other",
+    CAF_Subtype == "PI16+ CAFs" ~ "PI16+ CAFs",
+    CAF_Subtype == "CAP-like CAFs" ~ "Other",)
+  )
+CAFs@meta.data <- CAFs@meta.data %>%
+  mutate(GSEA.CAP.Like.CAFs = case_when(
+    CAF_Subtype == "LRRC15+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "LRRC15+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ myCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "ENG+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 1" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 2" ~ "Other",
+    CAF_Subtype == "WT1+ iCAFs 3" ~ "Other",
+    CAF_Subtype == "WT1+ CAFs" ~ "Other",
+    CAF_Subtype == "ifCAFs" ~ "Other",
+    CAF_Subtype == "VEGFA+ CAFs" ~ "Other",
+    CAF_Subtype == "PI16+ CAFs" ~ "Other",
+    CAF_Subtype == "CAP-like CAFs" ~ "CAP-like CAFs",)
+  )
+```
+
+
+```{r}
+scpa_out_cluster_LRRC15.myCAFs <- compare_seurat(CAFs,
+                           group1 = "GSEA.LRRC15.myCAFs", 
+                           group1_population = c("LRRC15+ myCAFs", "Other"),
+                           pathways = pathways)
+scpa_out_cluster_ENG.myCAFs <- compare_seurat(CAFs,
+                           group1 = "GSEA.ENG.myCAFs", 
+                           group1_population = c("ENG+ myCAFs", "Other"),
+                           pathways = pathways)
+scpa_out_cluster_ENG.iCAFs <- compare_seurat(CAFs,
+                           group1 = "GSEA.ENG.iCAFs", 
+                           group1_population = c("ENG+ iCAFs", "Other"),
+                           pathways = pathways)
+scpa_out_cluster_WT1.iCAFs <- compare_seurat(CAFs,
+                           group1 = "GSEA.WT.iCAFs", 
+                           group1_population = c("WT1+ iCAFs", "Other"),
+                           pathways = pathways)
+scpa_out_cluster_WT1.CAFs <- compare_seurat(CAFs,
+                           group1 = "GSEA.WT.CAFs", 
+                           group1_population = c("WT1+ CAFs", "Other"),
+                           pathways = pathways)
+scpa_out_cluster_ifCAFs <- compare_seurat(CAFs,
+                           group1 = "GSEA.ifCAFs", 
+                           group1_population = c("ifCAFs", "Other"),
+                           pathways = pathways)
+scpa_out_cluster_VEGFA.CAFs <- compare_seurat(CAFs,
+                           group1 = "GSEA.VEGFA.CAFs", 
+                           group1_population = c("VEGFA+ CAFs", "Other"),
+                           pathways = pathways)
+scpa_out_cluster_PI16.CAFs <- compare_seurat(CAFs,
+                           group1 = "GSEA.PI16.CAFs", 
+                           group1_population = c("PI16+ CAFs", "Other"),
+                           pathways = pathways)
+scpa_out_cluster_CAP.Like.CAFs <- compare_seurat(CAFs,
+                           group1 = "GSEA.CAP.Like.CAFs", 
+                           group1_population = c("CAP-like CAFs", "Other"),
+                           pathways = pathways)
+```
+
+#Plot ifCAF specific markers
+#Figure 2I
+```{r}
+Fig_2I_plot <- VlnPlot(CAFs, features =  c("RSAD2", "IFIT3", "CXCL10", "DDX58"), assay = "RNA", pt.size = 0, stack = T, flip = T, fill.by = "ident") + NoLegend() + theme(axis.text.x = element_text(angle = 90, hjust=1))
+
+if (!dir.exists("Figure_2")) {dir.create("Figure_2")}
+ggsave(plot = Fig_2I_plot, "Figure_2I_Stacked_VLN_ifCAF_markers.pdf", width = 7.5, height = 3.543, units = "in", path = "Figure_2/")
+```
+
+#GSEA for smaller clusters
+```{r}
+scpa_out_cluster_CAP.Like.CAFs_enriched <- scpa_out_cluster_CAP.Like.CAFs %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  mutate(Cluster = "CAP-like CAFs")
+
+scpa_out_cluster_PI16.CAFs_enriched <- scpa_out_cluster_PI16.CAFs %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  mutate(Cluster = "PI16+ CAFs")
+
+scpa_out_cluster_VEGFA.CAFs_enriched <- scpa_out_cluster_VEGFA.CAFs %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  mutate(Cluster = "VEGFA+ CAFs")
+
+scpa_out_cluster_WT1.CAFs_enriched <- scpa_out_cluster_WT1.CAFs %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  mutate(Cluster = "WT1+ CAFs")
+
+scpa_out_cluster_ifCAFs_enriched <- scpa_out_cluster_ifCAFs %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  mutate(Cluster = "ifCAFs")
+```
+
+#ifCAF GSEA
+```{r}
+Top.ifCAFs.Pathways <-  scpa_out_cluster_ifCAFs_enriched %>%
+  top_n(20, (qval + FC))
+
+Selected.Pathways <- c("REACTOME_INTERFERON_SIGNALING", "REACTOME_INTERFERON_ALPHA_BETA_SIGNALING", "HALLMARK_INTERFERON_GAMMA_RESPONSE", "KEGG_RIG_I_LIKE_RECEPTOR_SIGNALING_PATHWAY", "REACTOME_CLASS_I_MHC_MEDIATED_ANTIGEN_PROCESSING_PRESENTATION")
+
+Selected.Pathways.ifCAFs.GSEA <- rbind(scpa_out_cluster_LRRC15.myCAFs_enriched, scpa_out_cluster_ENG.myCAFs_enriched, scpa_out_cluster_ENG.iCAFs_enriched, scpa_out_cluster_WT1.iCAFs_enriched, scpa_out_cluster_ifCAFs_enriched, scpa_out_cluster_CAP.Like.CAFs_enriched, scpa_out_cluster_PI16.CAFs_enriched, scpa_out_cluster_VEGFA.CAFs_enriched, scpa_out_cluster_WT1.CAFs_enriched)  %>%
+  filter(Pathway %in% Selected.Pathways)
+
+Selected.Pathways.ifCAFs.GSEA <- Selected.Pathways.ifCAFs.GSEA %>%
+  mutate(Pathway = gsub("_", " ", Pathway))
+```
+
+# Figure 2J
+```{r}
+Fig_2J_plot <- ggplot(Selected.Pathways.ifCAFs.GSEA, aes(x = Cluster, y = Pathway)) + 
+               geom_point(aes(color = qval, size = FC)) +
+               theme_bw(base_size =6) +
+        scale_colour_gradient(limits=c(0, 10), low="white", high = "red") +
+        #scale_size(range = c(2,8)) +
+        ylab(NULL) +
+        ggtitle("GSEA iCAF & myCAF subtypes") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1, size = 12), axis.text.y = element_text(size = 10), legend.text = element_text(size = 10), legend.title = element_text(size = 12)) +
+  scale_x_discrete(limits = c("ifCAFs", "LRRC15+ myCAFs", "ENG+ myCAFs", "ENG+ iCAFs", "WT1+ iCAFs", "WT1+ CAFs", "VEGFA+ CAFs", "PI16+ CAFs", "CAP-like CAFs")) +
+  scale_y_discrete(labels = function(x) str_wrap(x, width = 30))
+
+if (!dir.exists("Figure_2")) {dir.create("Figure_2")}
+ggsave(plot = Fig_2J_plot, "Figure_2J_GSEA_ifCAFs.pdf", width = 7.5, height = 3.543, units = "in", path = "Figure_2/")
+```
+
+TF activity inference for ifCAFs
+# "0" = "LRRC15+ myCAFs 1", "1" = "WT1+ iCAFs 1", "2" = "ENG+ iCAFs 1", "3" = "ENG+ iCAFs 2", "4" = "ENG+ myCAFs 1", "5" = "WT1+ iCAFs 2", "6" = "LRRC15+ myCAFs 2", "7" = "ENG+ myCAFs 2", "8" = "WT1+ iCAFs 3", "9" = "ENG+ iCAFs 3", "10" = "VEGFA+ CAFs", "11" = "CAP-like CAFs", "12" = "PI16+ CAFs", "13" = "ifCAFs", "14" = "WT1+ CAFs"
+```{r}
+TF.Activity.CAFs@meta.data <- TF.Activity.CAFs@meta.data %>%
+  mutate(Subtype = case_when(
+    CAFs@active.ident == "0" ~ "LRRC15+ myCAFs",
+    CAFs@active.ident == "6" ~ "LRRC15+ myCAFs",
+    CAFs@active.ident == "4" ~ "ENG+ myCAFs",
+    CAFs@active.ident == "7" ~ "ENG+ myCAFs",
+    CAFs@active.ident == "2" ~ "ENG+ iCAFs",
+    CAFs@active.ident == "3" ~ "ENG+ iCAFs",
+    CAFs@active.ident == "9" ~ "ENG+ iCAFs",
+    CAFs@active.ident == "1" ~ "WT1+ iCAFs",
+    CAFs@active.ident == "5" ~ "WT1+ iCAFs",
+    CAFs@active.ident == "8" ~ "WT1+ iCAFs",
+    CAFs@active.ident == "10" ~ "VEGFA+ CAFs",
+    CAFs@active.ident == "11" ~ "CAP-like CAFs",
+    CAFs@active.ident == "12" ~ "PI16+ CAFs",
+    CAFs@active.ident == "13" ~ "ifCAFs",
+    CAFs@active.ident == "14" ~ "WT1+ CAFs",
+  ))
+
+# Extract activities from object as a long dataframe
+TF.Activity.df.subtype <- t(as.matrix(TF.Activity.CAFs@assays$tfsulm@scale.data)) %>%
+  as.data.frame() %>%
+  mutate(Subtype = TF.Activity.CAFs@meta.data$Subtype) %>%
+  pivot_longer(cols = -Subtype, names_to = "source", values_to = "score") %>%
+  group_by(Subtype, source) %>%
+  summarise(mean = mean(score))
+```
+
+```{r}
+Top.ifCAFs.TFs <- ifCAFs.TFs %>%
+  top_n(5, avg_diff)
+```
+
+```{r}
+ifCAFs.Selected.TF.Activity<- TF.Activity.df.subtype %>%
+  filter(source %in% rownames(Top.ifCAFs.TFs)) %>%
+  spread(key = Subtype, value = mean) %>%
+  column_to_rownames("source") %>%
+  select(c("ifCAFs", "LRRC15+ myCAFs", "ENG+ myCAFs", "ENG+ iCAFs", "WT1+ iCAFs", "WT1+ CAFs", "VEGFA+ CAFs", "PI16+ CAFs", "CAP-like CAFs"))
+```
+
+# Figure 2K
+```{r}
+breaksList = seq(-2, 2, by = 0.1)
+Fig_2K_plot <- pheatmap(ifCAFs.Selected.TF.Activity, breaks = breaksList, cluster_rows = F, cluster_cols = F, color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(length(breaksList)))
+
+if (!dir.exists("Figure_2")) {dir.create("Figure_2")}
+ggsave(plot = Fig_2K_plot, "Figure_2K_TFs_ifCAFs.pdf", width = 7.5, height = 3.543, units = "in", path = "Figure_2/")
+```
+
+# Figure S4A - UMAP by samples 
+```{r}
+cells.order.random <- sample(Cells(CAFs))
+Fig_4A_plot <- DimPlot(CAFs, reduction = "umap", label = F, pt.size = 1, group.by = "orig.ident", cells = cells.order.random)
+
+if (!dir.exists("Figure_S4")) {dir.create("Figure_S4")}
+ggsave(plot = Fig_4A_plot, "Figure_S4A_UMAP.pdf", width = 7.5, height = 4.4444444, units = "in", path = "Figure_S4/")
+```
+
+#Figure S4B - samples per cluster
+```{r}
+Sample_predicted_id_props <-  CAFs@meta.data %>% 
+  group_by(integrated_snn_res.0.6, orig.ident) %>% 
+  summarise(count=n()) %>% 
+  group_by(integrated_snn_res.0.6) %>% 
+  mutate(prop=count/sum(count)) %>% 
+  ungroup()
+
+Fig_4B_plot <- ggplot(Sample_predicted_id_props, aes(x=integrated_snn_res.0.6, y=prop, fill=orig.ident)) +
+  geom_bar(stat="identity", position="stack") +
+  theme_bw() + 
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) + 
+    scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
+  xlab("Cluster") +
+  ylab("Proportion") + 
+  scale_fill_discrete(name = "Samples") +
+  scale_x_discrete(limits = c('0', '6', '4', '7', '2', '3', '9', '1', '5', '8', '14', '13','10', '12', '11'))
+
+if (!dir.exists("Figure_S4")) {dir.create("Figure_S4")}
+ggsave(plot = Fig_4B_plot, "Figure_S4B_Cluster_Sample_Proportions.pdf", width = 3.75, height = 4.4444444, units = "in", path = "Figure_S4/")
+```
+
+#Plot inflammatory pathways Z-score in clusters
+```{r}
+hall_mark_pathways <- msigdbr("Homo sapiens", "H")
+reactome_pathways <- msigdbr(species = "human", category = "C2", subcategory = "CP:REACTOME")
+kegg_pathways <- msigdbr(species = "human", category = "C2", subcategory = "CP:KEGG")
+
+pathways <- rbind(hall_mark_pathways, reactome_pathways, kegg_pathways) %>%
+  format_pathways()
+```
+
+```{r}
+HALLMARK_TNF <- hall_mark_pathways %>%
+  filter(gs_name == "HALLMARK_TNFA_SIGNALING_VIA_NFKB") %>%
+  select("gene_symbol")
+HALLMARK_TNF <- unique(HALLMARK_TNF$gene_symbol)
+
+Reactome_Complement_Cascade <- reactome_pathways %>%
+  filter(gs_name == "REACTOME_COMPLEMENT_CASCADE") %>%
+  select("gene_symbol")
+Reactome_Complement_Cascade <- unique(Reactome_Complement_Cascade$gene_symbol)
+```
+
+# Figure S4C
+```{r}
+p1 <- plot_two_Zs_Selected_Cluster_Average(HALLMARK_TNF, Reactome_Complement_Cascade, CAFs, x_lab_sign1_name="HALLMARK - TNFa Signaling via NFKB Signature Z-Score", y_lab_sign2_name="Reactome - Complement Cascade Signature Z-Score", selected_clusters = c("0", "1", "2", "3", "4", "5", "6", "7", "8", "9"), title = "", meta.data.clusters = "integrated_snn_res.0.6", xlim = xlim(-0.5, 0.5), ylim = ylim(-0.5, 0.5)) + scale_color_manual(values=c("#F8766D", "#00C0AF", "#6BB100", "#00BA38", "#C99800", "#00BCD8", "#E58700", "#A3A500", "#00B0F6", "#00BF7D")) + NoLegend()
+
+if (!dir.exists("Figure_S4")) {dir.create("Figure_S4")}
+ggsave(plot = p1, "Figure_S4C_Average_Inflammatory_Signature_Score.pdf", width = 3.75, height = 4.4444444, units = "in", path = "Figure_S4/")
+```
+
+# Add signature Z-score for the Wang meCAF subtype
+```{r}
+Wang.meCAF.Signature <- c("PLA2G2A", "CRABP2", "SERPINE2", "MFAP5", "EFEMP1", "RARRES1", "PI16", "RPL22L1", "S100A10", "TGFBI", "IGFBP6", "IGF1", "PRDX4", "CFD", "FKBP11", "ANGPTL4", "ANXA2", "RCN3", "TUBA1B", "SERPINH1", "NME1", "PPIB", "CCDC80", "KDELR2", "CCL11", "SFRP4", "MYDGF", "P4HB", "KDELR3", "EEF1B2", "SPARC", "NNMT", "TIMP1", "NUCB2", "LOX", "HTRA3", "ENO1", "SRM", "SSR4", "RPSA", "COMP", "PTGS1", "COPZ2", "SH3BGRL3", "CKAP4", "COL1A1", "SSR3", "TMED3", "RCN1", "MGST1", "TUBA1C", "LDHA", "OSTC", "PLIN2", "OLFML3", "LXN", "ELN", "YIF1A", "RPS2", "ETFB", "SSR2", "SEC61B", "SPON2", "TMED9", "UCHL1", "PLPP1", "ARF4", "FKBP10", "GSTP1", "TPI1", "JPT1", "PRDX6", "HSP90B1", "PTGIS", "PDIA6", "CERCAM", "PYCR1")
+```
+
+# Figure S4D
+"0" = "LRRC15+ myCAFs 1", "1" = "WT1+ iCAFs 1", "2" = "ENG+ iCAFs 1", "3" = "ENG+ iCAFs 2", "4" = "ENG+ myCAFs 1", "5" = "WT1+ iCAFs 2", "6" = "LRRC15+ myCAFs 2", "7" = "ENG+ myCAFs 2", "8" = "WT1+ iCAFs 3", "9" = "ENG+ iCAFs 3", "10" = "VEGFA+ CAFs", "11" = "CAP-like CAFs", "12" = "PI16+ CAFs", "13" = "ifCAFs", "14" = "WT1+ CAFs"
+```{r}
+Fig_4D_plot <- plot_two_Zs_Selected_Cluster_Average(Elyada.iCAF.Signature, Wang.meCAF.Signature, CAFs, x_lab_sign1_name="Elyada et al 2019, iCAF Signature Z-Score", y_lab_sign2_name="Wang et al 2021, meCAF Signature Z-Score", selected_clusters = c("0", "1", "2", "3", "4", "5", "6", "7", "8", "9"), title = "", meta.data.clusters = "integrated_snn_res.0.6", xlim = xlim(-0.5, 1), ylim = ylim(-1, 1)) + scale_color_manual(values=c("#F8766D", "#00C0AF", "#6BB100", "#00BA38", "#C99800", "#00BCD8", "#E58700", "#A3A500", "#00B0F6", "#00BF7D")) + NoLegend()
+
+if (!dir.exists("Figure_S4")) {dir.create("Figure_S4")}
+ggsave(plot = Fig_4D_plot, "Figure_S4D_Cluster_Sig_Scores_iCAF_meCAF.pdf", width = 3.75, height = 4.4444444, units = "in", path = "Figure_S4/")
+```
+
+# Plot iCAF and myCAF signature scores for the smaller CAF clusters
+```{r}
+p1 <- plot_two_Zs_Selected_Cluster_Average(Elyada.iCAF.Signature, Wang.iCAF.Signature, CAFs, x_lab_sign1_name="Elyada et al 2019, iCAF Signature Z-Score", y_lab_sign2_name="Wang et al 2021, iCAF Signature Z-Score", selected_clusters = c("10", "11", "12", "13", "14"), title = "", meta.data.clusters = "integrated_snn_res.0.6", xlim = xlim(-0.5, 1), ylim = ylim(-1.5, 1)) + scale_color_manual(values=c("#B983FF", "#FD61D1", "#E76BF3", "#FF67A4", "#619CFF"))  + NoLegend()
+
+p2 <- plot_two_Zs_Selected_Cluster_Average(Elyada.myCAF.Signature, Wang.myCAF.Signature, CAFs, x_lab_sign1_name="Elyada et al 2019, myCAF Signature Z-Score", y_lab_sign2_name="Wang et al 2021, myCAF Signature Z-Score", selected_clusters = c("10", "11", "12", "13", "14"), title = "", meta.data.clusters = "integrated_snn_res.0.6", xlim = xlim(-1, 1), ylim = ylim(-0.75, 1)) + scale_color_manual(values=c("#B983FF", "#FD61D1", "#E76BF3", "#FF67A4", "#619CFF")) + NoLegend()
+```
+
+# Figure S4E & F
+```{r}
+Fig_4E_plot <- plot_grid(p1, p2, nrow = 1)
+
+if (!dir.exists("Figure_S4")) {dir.create("Figure_S4")}
+ggsave(plot = Fig_4E_plot, "Figure_S4E_F_Cluster_Sig_Scores_iCAF_myCAF.pdf", width = 7.5, height = 4.4444444, units = "in", path = "Figure_S4/")
+```
+
+
+# Plot iCAF and myCAF subtype DEGs as heatmap
+```{r}
+CAFs@meta.data <- CAFs@meta.data %>%
+  mutate(iCAF.myCAF.subtype = case_when(
+    CAFs@active.ident == "0" ~ "LRRC15+ myCAFs",
+    CAFs@active.ident == "6" ~ "LRRC15+ myCAFs",
+    CAFs@active.ident == "4" ~ "ENG+ myCAFs",
+    CAFs@active.ident == "7" ~ "ENG+ myCAFs",
+    CAFs@active.ident == "2" ~ "ENG+ iCAFs",
+    CAFs@active.ident == "3" ~ "ENG+ iCAFs",
+    CAFs@active.ident == "9" ~ "ENG+ iCAFs",
+    CAFs@active.ident == "1" ~ "WT1+ iCAFs",
+    CAFs@active.ident == "5" ~ "WT1+ iCAFs",
+    CAFs@active.ident == "8" ~ "WT1+ iCAFs",
+    CAFs@active.ident == "10" ~ "Other",
+    CAFs@active.ident == "11" ~ "Other",
+    CAFs@active.ident == "12" ~ "Other",
+    CAFs@active.ident == "13" ~ "Other",
+    CAFs@active.ident == "14" ~ "Other",
+  ))
+
+iCAF.myCAF.subtypes.markers <- unique(c(rownames(WT1.iCAF.markers), rownames(ENG.iCAF.markers), rownames(ENG.myCAF.markers), rownames(LRRC15.myCAF.markers)))
+
+
+iCAF.myCAF.subtypes.markers.Expr <- DotPlot(CAFs, assay = "RNA", features = iCAF.myCAF.subtypes.markers, group.by = "iCAF.myCAF.subtype")
+iCAF.myCAF.subtypes.markers.Expr <- iCAF.myCAF.subtypes.markers.Expr$data
+
+iCAF.myCAF.subtypes.markers.Expr <- iCAF.myCAF.subtypes.markers.Expr %>%
+  filter(id %in% c("LRRC15+ myCAFs", "ENG+ myCAFs", "ENG+ iCAFs", "WT1+ iCAFs"))
+
+
+iCAF.myCAF.subtypes.markers.Expr <- iCAF.myCAF.subtypes.markers.Expr %>%
+  select(c(id, avg.exp.scaled, features.plot)) %>%
+  spread(key = id, value = avg.exp.scaled) %>%
+  column_to_rownames("features.plot")
+
+iCAF.myCAF.subtypes.markers.Expr <- iCAF.myCAF.subtypes.markers.Expr %>%
+  select(c("LRRC15+ myCAFs", "ENG+ myCAFs", "ENG+ iCAFs", "WT1+ iCAFs"))
+
+Heatmap.Genes <- rownames(iCAF.myCAF.subtypes.markers.Expr)
+
+Selected.Heatmap.Genes <- c("COL11A1", "MMP11", "SDC1", "CXCL14", "IGFBP5", "IGFBP3", "C7", "TXNIP", "SOD3", "PLA2G2A", "HAS2", "CXCL12")
+
+replace_chars <- function(lst, reference) {
+  # Loop over the characters in lst
+  for (i in seq_along(lst)) {
+    # Check if the character is in the reference list
+    if (!(lst[i] %in% reference)) {
+      # If not, replace it with ""
+      lst[i] <- ""
+    }
+  }
+  # Return the modified list
+  lst
+}
+
+# Call the function with list1 and list2 as arguments
+Selected.Heatmap.Genes <- replace_chars(Heatmap.Genes, Selected.Heatmap.Genes)
+```
+
+# Figure S4G
+```{r}
+breaksList = seq(-2, 2, by = 0.1)
+Fig_4G_plot <- pheatmap(iCAF.myCAF.subtypes.markers.Expr, breaks = breaksList, labels_row = Selected.Heatmap.Genes, cluster_cols = FALSE,  cluster_rows = FALSE, treeheight_row = 0, color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(length(breaksList)))
+
+if (!dir.exists("Figure_S4")) {dir.create("Figure_S4")}
+ggsave(plot = Fig_4G_plot, "Figure_S4G_iCAF_myCAF_Subtype_markers_heatmap.pdf", width = 3.75, height = 4.4444444, units = "in", path = "Figure_S4/")
+```
+
+#Calculate iCAF and myCAF subtype proportions in each sample
+```{r}
+CAF.subtype.proportions <-  CAFs@meta.data %>%
+  select(c("orig.ident", "Annotation")) %>%
+  mutate(iCAF.myCAF.subtypes = case_when(Annotation == "ENG+ iCAFs" ~ "ENG+ iCAFs",
+                                         Annotation == "ENG+ myCAFs" ~ "ENG+ myCAFs",
+                                         Annotation == "WT1+ iCAFs" ~ "WT1+ iCAFs",
+                                         Annotation == "LRRC15+ myCAFs" ~ "LRRC15+ myCAFs",
+                                         Annotation == "WT1+ CAFs" ~ "Other",
+                                         Annotation == "PI16+ CAFs" ~ "Other",
+                                         Annotation == "ifCAFs" ~ "Other",
+                                         Annotation == "VEGFA+ CAFs" ~ "Other",
+                                         Annotation == "CAP-like CAFs" ~ "Other")) %>%
+  select(c("orig.ident", "iCAF.myCAF.subtypes"))
+
+CAF.subtype.proportions <- CAF.subtype.proportions %>%
+  group_by(orig.ident, iCAF.myCAF.subtypes) %>%
+  summarise(count = n()) %>%
+  mutate(proportion = count / sum(count)) %>%
+  ungroup()
+
+```
+
+```{r}
+# Function to create donut plot
+create_donut_plot <- function(data, sample) {
+  data <- data %>% filter(orig.ident == sample)
+  
+  ggplot(data, aes(x = 2, y = proportion, fill = iCAF.myCAF.subtypes)) +
+    geom_bar(stat = "identity", width = 1) +
+    coord_polar(theta = "y") +
+    xlim(1, 3) +  # Adjust to create the "hole" in the middle
+    theme_void() +
+    ggtitle(sample) +  # Set the sample as the plot title
+    theme(
+      legend.position = "right",
+      legend.title = element_blank(),
+      plot.title = element_text(hjust = 0.5)  # Center the title
+    )
+}
+
+# Create donut plot for sample "S1"
+p1 <- create_donut_plot(CAF.subtype.proportions, "S1")
+p2 <- create_donut_plot(CAF.subtype.proportions, "S2")
+p3 <- create_donut_plot(CAF.subtype.proportions, "S3")
+p4 <- create_donut_plot(CAF.subtype.proportions, "S4")
+p5 <- create_donut_plot(CAF.subtype.proportions, "S5")
+p6 <- create_donut_plot(CAF.subtype.proportions, "S6")
+```
+
+#Figure S4H
+```{r}
+# Extract legend from one of the plots
+legend <- get_legend(p1)
+
+# Remove legends from the plots
+p1 <- p1 + theme(legend.position = "none")
+p2 <- p2 + theme(legend.position = "none")
+p3 <- p3 + theme(legend.position = "none")
+p4 <- p4 + theme(legend.position = "none")
+p5 <- p5 + theme(legend.position = "none")
+p6 <- p6 + theme(legend.position = "none")
+
+Fig_4H_plot <- plot_grid(
+  plot_grid(p1, p2, p3, p4, p5, p6, nrow = 2),
+  legend,
+  ncol = 2,
+  rel_widths = c(1, 0.2)
+)
+
+if (!dir.exists("Figure_S4")) {dir.create("Figure_S4")}
+ggsave(plot = Fig_4H_plot, "Figure_S4H_CAF_subtype_Proportions.pdf", width = 9, height = 6, units = "in", path = "Figure_S4/")
+```
+
+# CAF subtype proportions in dense/lose
+Figure S4I. 
+```{r}
+CAF.subtype.proportions <- CAF.subtype.proportions %>%
+  mutate(Desmoplasia = case_when(orig.ident == "S1" ~ "Dense",
+                                 orig.ident == "S2" ~ "Dense",
+                                 orig.ident == "S3" ~ "Dense",
+                                 orig.ident == "S4" ~ "Dense",
+                                 orig.ident == "S5" ~ "Moderate/Loose",
+                                 orig.ident == "S6" ~ "Moderate/Loose"))
+
+
+library(dplyr)
+library(ggplot2)
+
+Fig_4I_plot <- ggplot(CAF.subtype.proportions, aes(x = Desmoplasia, y = proportion, fill = iCAF.myCAF.subtypes)) +
+  geom_bar(stat = "identity", position = position_dodge(width = 0.9)) +  # Filled bars
+  geom_point(position = position_dodge(width = 0.9), color = "black", size = 2) +  # Individual points in black
+  stat_summary(aes(group = iCAF.myCAF.subtypes), fun = mean, geom = "crossbar", 
+               position = position_dodge(width = 0.9), color = "black", width = 0.75, size = 0.5) +  # Mean lines in black
+  labs(x = "Desmoplasia", y = "Proportion", fill = "CAF Subtypes") +
+  theme_bw() +
+  theme(
+    legend.position = "right",
+    axis.text.x = element_text(angle = 45, hjust = 1)
+  )
+
+if (!dir.exists("Figure_S4")) {dir.create("Figure_S4")}
+ggsave(plot = Fig_4I_plot, "Figure_S4I_CAF_subtype_Proportions_Desmoplasia_Annotation.pdf", width = 5, height = 4, units = "in", path = "Figure_S4/")
+```
+
+```{r}
+scpa_out_cluster_LRRC15.myCAFs_enriched <- scpa_out_cluster_LRRC15.myCAFs %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  mutate(Cluster = "LRRC15+ myCAFs")
+
+scpa_out_cluster_ENG.myCAFs_enriched <- scpa_out_cluster_ENG.myCAFs %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05)  %>%
+  mutate(Cluster = "ENG+ myCAFs")
+
+scpa_out_cluster_ENG.iCAFs_enriched <- scpa_out_cluster_ENG.iCAFs %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  mutate(Cluster = "ENG+ iCAFs")
+
+scpa_out_cluster_WT1.iCAFs_enriched <- scpa_out_cluster_WT1.iCAFs %>%
+  filter(FC > 0) %>%
+  filter(adjPval < 0.05) %>%
+  mutate(Cluster = "WT1+ iCAFs")
+```
+
+```{r}
+Top.Common.myCAF.Pathways <- scpa_out_cluster_LRRC15.myCAFs_enriched %>%
+  inner_join(scpa_out_cluster_ENG.myCAFs_enriched, by = "Pathway") %>%
+  mutate(qval.combined = (qval.x + FC.x) + (qval.y + FC.y)) %>%
+  top_n(20, qval.combined)
+
+Top.Common.iCAF.Pathways <- scpa_out_cluster_WT1.iCAFs_enriched %>%
+  inner_join(scpa_out_cluster_ENG.iCAFs_enriched, by = "Pathway") %>%
+  mutate(qval.combined = (qval.x + FC.x) + (qval.y + FC.y)) %>%
+  top_n(20, qval.combined)
+
+`%!in%` = Negate(`%in%`)
+
+Top.Specific.WT1.iCAFs.Pathways <- scpa_out_cluster_WT1.iCAFs_enriched %>%
+  filter(Pathway %!in% c(scpa_out_cluster_ENG.iCAFs_enriched$Pathway, scpa_out_cluster_LRRC15.myCAFs_enriched$Pathway, scpa_out_cluster_ENG.myCAFs_enriched$Pathway)) %>%
+  top_n(20, (qval + FC))
+
+Top.Specific.ENG.iCAFs.Pathways <- scpa_out_cluster_ENG.iCAFs_enriched  %>%
+  filter(Pathway %!in% c(scpa_out_cluster_WT1.iCAFs_enriched$Pathway, scpa_out_cluster_LRRC15.myCAFs_enriched$Pathway, scpa_out_cluster_ENG.myCAFs_enriched$Pathway)) %>%
+  top_n(20, (qval + FC))
+
+Top.Specific.LRRC15.myCAFs.Pathways <- scpa_out_cluster_LRRC15.myCAFs_enriched %>%
+  filter(Pathway %!in% c(scpa_out_cluster_ENG.iCAFs_enriched$Pathway, scpa_out_cluster_WT1.iCAFs_enriched$Pathway, scpa_out_cluster_ENG.myCAFs_enriched$Pathway)) %>%
+  top_n(20, (qval + FC))
+
+Top.Specific.ENG.myCAFs.Pathways <-  scpa_out_cluster_ENG.myCAFs_enriched %>%
+  filter(Pathway %!in% c(scpa_out_cluster_WT1.iCAFs_enriched$Pathway, scpa_out_cluster_LRRC15.myCAFs_enriched$Pathway, scpa_out_cluster_ENG.iCAFs_enriched$Pathway)) %>%
+  top_n(20, (qval + FC))
+
+Top.WT1.iCAFs.Pathways <- scpa_out_cluster_WT1.iCAFs_enriched %>%
+  top_n(20, (qval + FC))
+
+Top.ENG.iCAFs.Pathways <- scpa_out_cluster_ENG.iCAFs_enriched  %>%
+  top_n(20, (qval + FC))
+
+Top.LRRC15.myCAFs.Pathways <- scpa_out_cluster_LRRC15.myCAFs_enriched %>%
+  top_n(20, (qval + FC))
+
+Top.ENG.myCAFs.Pathways <-  scpa_out_cluster_ENG.myCAFs_enriched %>%
+  top_n(20, (qval + FC))
+
+Selected.Pathways <- c("KEGG_COMPLEMENT_AND_COAGULATION_CASCADES", "REACTOME_GPCR_LIGAND_BINDING", "REACTOME_COMPLEMENT_CASCADE", "KEGG_JAK_STAT_SIGNALING_PATHWAY", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "HALLMARK_MYC_TARGETS_V1", "HALLMARK_HYPOXIA", "HALLMARK_INFLAMMATORY_RESPONSE", "REACTOME_INTERLEUKIN_7_SIGNALING", "HALLMARK_INTERFERON_ALPHA_RESPONSE", "REACTOME_INFLAMMASOMES", "REACTOME_SENESCENCE_ASSOCIATED_SECRETORY_PHENOTYPE_SASP", "REACTOME_COLLAGEN_BIOSYNTHESIS_AND_MODIFYING_ENZYMES", "REACTOME_DEGRADATION_OF_THE_EXTRACELLULAR_MATRIX", "KEGG_FOCAL_ADHESION", "HALLMARK_MYOGENESIS", "REACTOME_SIGNALING_BY_ACTIVIN", "REACTOME_STRIATED_MUSCLE_CONTRACTION", "REACTOME_OTHER_INTERLEUKIN_SIGNALING", "REACTOME_LAMININ_INTERACTIONS", "KEGG_HEDGEHOG_SIGNALING_PATHWAY", "REACTOME_NOTCH3_ACTIVATION_AND_TRANSMISSION_OF_SIGNAL_TO_THE_NUCLEUS")
+
+Selected.Pathways.iCAF.myCAF.Subtypes.GSEA <- rbind(scpa_out_cluster_LRRC15.myCAFs_enriched, scpa_out_cluster_ENG.myCAFs_enriched, scpa_out_cluster_ENG.iCAFs_enriched, scpa_out_cluster_WT1.iCAFs_enriched)  %>%
+  filter(Pathway %in% Selected.Pathways)
+
+Selected.Pathways.iCAF.myCAF.Subtypes.GSEA <- Selected.Pathways.iCAF.myCAF.Subtypes.GSEA %>%
+  mutate(Pathway = gsub("_", " ", Pathway))
+```
+
+# Figure S4K
+```{r}
+Fig_4K_plot <- ggplot(Selected.Pathways.iCAF.myCAF.Subtypes.GSEA, aes(x = Cluster, y = Pathway)) + 
+               geom_point(aes(color = qval, size = FC)) +
+               theme_bw(base_size =6) +
+        scale_colour_gradient(limits=c(0, 10), low="white", high = "red") +
+        #scale_size(range = c(2,8)) +
+        ylab(NULL) +
+  theme(axis.text.x = element_text(angle = 45, hjust=1, size = 10), title = element_text(size = 1), axis.text.y = element_text(size = 8), legend.text = element_text(size = 10)) +
+  scale_x_discrete(limits = c("LRRC15+ myCAFs", "ENG+ myCAFs", "WT1+ iCAFs", "ENG+ iCAFs")) +
+  scale_y_discrete(limits = c("KEGG COMPLEMENT AND COAGULATION CASCADES", "REACTOME GPCR LIGAND BINDING", "REACTOME COMPLEMENT CASCADE", "KEGG JAK STAT SIGNALING PATHWAY", "HALLMARK TNFA SIGNALING VIA NFKB", "HALLMARK MYC TARGETS V1", "HALLMARK HYPOXIA", "HALLMARK INFLAMMATORY RESPONSE", "REACTOME INTERLEUKIN 7 SIGNALING", "HALLMARK INTERFERON ALPHA RESPONSE", "REACTOME INFLAMMASOMES", "REACTOME SENESCENCE ASSOCIATED SECRETORY PHENOTYPE SASP", "REACTOME COLLAGEN BIOSYNTHESIS AND MODIFYING ENZYMES", "REACTOME DEGRADATION OF THE EXTRACELLULAR MATRIX", "KEGG FOCAL ADHESION", "HALLMARK MYOGENESIS", "REACTOME SIGNALING BY ACTIVIN", "REACTOME STRIATED MUSCLE CONTRACTION", "REACTOME OTHER INTERLEUKIN SIGNALING", "REACTOME LAMININ INTERACTIONS", "KEGG HEDGEHOG SIGNALING PATHWAY", "REACTOME NOTCH3 ACTIVATION AND TRANSMISSION OF SIGNAL TO THE NUCLEUS"), labels = function(x) str_wrap(x, width = 100))
+
+if (!dir.exists("Figure_S4")) {dir.create("Figure_S4")}
+ggsave(plot = Fig_4K_plot, "Figure_S4K_Pathways_iCAF_myCAF_subtypes.pdf", width = 7.5, height = 4.4444444, units = "in", path = "Figure_S4/")
+```
+
+# plot TF activities for iCAF and myCAF subtypes
+```{r}
+WT1.iCAFs.TFs <- FindMarkers(TF.Activity.CAFs, ident.1 = c("1", "5", "8"), assay = "tfsulm", slot = "scale.data", only.pos = T)
+WT1.iCAFs.TFs <- WT1.iCAFs.TFs %>%
+filter(p_val_adj < 0.05)
+ENG.iCAFs.TFs <- FindMarkers(TF.Activity.CAFs, ident.1 = c("2", "3", "9"), assay = "tfsulm", slot = "scale.data", only.pos = T)
+ENG.iCAFs.TFs <- ENG.iCAFs.TFs %>%
+filter(p_val_adj < 0.05)
+LRRC15.myCAFs.TFs <- FindMarkers(TF.Activity.CAFs, ident.1 = c("0", "6"), assay = "tfsulm", slot = "scale.data", only.pos = T)
+LRRC15.myCAFs.TFs <- LRRC15.myCAFs.TFs %>%
+filter(p_val_adj < 0.05)
+ENG.myCAFs.TFs <- FindMarkers(TF.Activity.CAFs, ident.1 = c("4", "7"), assay = "tfsulm", slot = "scale.data", only.pos = T)
+ENG.myCAFs.TFs <- ENG.myCAFs.TFs %>%
+filter(p_val_adj < 0.05)
+ifCAFs.TFs <- FindMarkers(TF.Activity.CAFs, ident.1 = c("13"), assay = "tfsulm", slot = "scale.data", only.pos = T)
+ifCAFs.TFs <- ifCAFs.TFs %>%
+filter(p_val_adj < 0.05)
+VEGFA.CAFs.TFs <- FindMarkers(TF.Activity.CAFs, ident.1 = c("10"), assay = "tfsulm", slot = "scale.data", only.pos = T)
+VEGFA.CAFs.TFs <- VEGFA.CAFs.TFs %>%
+filter(p_val_adj < 0.05)
+CAP.like.CAFs.TFs <- FindMarkers(TF.Activity.CAFs, ident.1 = c("11"), assay = "tfsulm", slot = "scale.data", only.pos = T)
+CAP.like.CAFs.TFs <- CAP.like.CAFs.TFs %>%
+filter(p_val_adj < 0.05)
+PI16.CAFs.TFs <- FindMarkers(TF.Activity.CAFs, ident.1 = c("12"), assay = "tfsulm", slot = "scale.data", only.pos = T)
+PI16.CAFs.TFs <- PI16.CAFs.TFs %>%
+filter(p_val_adj < 0.05)
+WT1.CAFs.TFs <- FindMarkers(TF.Activity.CAFs, ident.1 = c("14"), assay = "tfsulm", slot = "scale.data", only.pos = T)
+WT1.CAFs.TFs <- WT1.CAFs.TFs %>%
+filter(p_val_adj < 0.05)
+```
+
+```{r}
+Top.WT1.iCAFs.TFs <- WT1.iCAFs.TFs %>%
+  top_n(5, avg_diff)
+
+Top.ENG.iCAFs.TFs <- ENG.iCAFs.TFs %>%
+  top_n(5, avg_diff)
+
+Top.LRRC15.myCAFs.TFs <- LRRC15.myCAFs.TFs %>%
+  top_n(5, avg_diff)
+
+Top.ENG.myCAFs.TFs <- ENG.myCAFs.TFs %>%
+  top_n(5, avg_diff)
+
+Top.TF.Activity.df.iCAFs.myCAFs.subtype<- TF.Activity.df.iCAFs.myCAFs.subtype %>%
+  filter(source %in% c(rownames(Top.WT1.iCAFs.TFs), rownames(Top.ENG.iCAFs.TFs), rownames(Top.LRRC15.myCAFs.TFs), rownames(Top.ENG.myCAFs.TFs))) %>%
+  spread(key = iCAF.myCAF.subtype, value = mean) %>%
+  column_to_rownames("source") %>%
+  select(c("LRRC15+ myCAFs", "ENG+ myCAFs", "ENG+ iCAFs", "WT1+ iCAFs"))
+
+TF.order <- c(rownames(Top.WT1.iCAFs.TFs), rownames(Top.ENG.iCAFs.TFs), rownames(Top.LRRC15.myCAFs.TFs), rownames(Top.ENG.myCAFs.TFs))
+
+Top.TF.Activity.df.iCAFs.myCAFs.subtype <- Top.TF.Activity.df.iCAFs.myCAFs.subtype[match(TF.order, rownames(Top.TF.Activity.df.iCAFs.myCAFs.subtype)),]
+```
+
+# Figure S4J
+```{r}
+breaksList = seq(-1.5, 1.5, by = 0.1)
+Fig_4J_plot <- pheatmap(Top.TF.Activity.df.iCAFs.myCAFs.subtype, breaks = breaksList, cluster_rows = F, fontsize_row = 10,  cluster_cols = F, color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(length(breaksList)))
+
+if (!dir.exists("Figure_S4")) {dir.create("Figure_S4")}
+ggsave(plot = Fig_4J_plot, "Figure_S4J_TF_Activities_iCAF_myCAF_subtypes.pdf", width = 7.5, height = 4.4444444, units = "in", path = "Figure_S4/")
+```
+
+
+
+
+# Smaller clusters
+# Figure S5A
+```{r}
+Fig_5A_plot <- VlnPlot(CAFs, features =  c("VEGFA", "LOX", "HILPDA", "ADM"), assay = "RNA", pt.size = 0, stack = T, flip = T, fill.by = "ident") + NoLegend() + theme(axis.text.x = element_text(angle = 90, hjust=1))
+
+if (!dir.exists("Figure_S5")) {dir.create("Figure_S5")}
+ggsave(plot = Fig_5A_plot, "Figure_S5A_Stacked_Vln_VEGFA_CAFs.pdf", width = 3.75, height = 4.4444444, units = "in", path = "Figure_S5/")
+```
+
+#Find markers which distinguish WT1 CAFs from WT1 iCAFs
+```{r}
+Wt1CAFs.vs.wt1.iCAFs <- FindMarkers(CAFs, ident.1 = "14", ident.2 = c("1", "5", "8"), assay = "RNA", logfc.threshold = 0.41, min.pct = 0.25)
+```
+
+# Figure S5B
+```{r}
+Fig_5B_plot <- VlnPlot(CAFs, features =  c("C7", "C3", "CXCL2", "EPYC"), assay = "RNA", pt.size = 0, stack = T, flip = T, fill.by = "ident") + NoLegend() + theme(axis.text.x = element_text(angle = 90, hjust=1))
+
+if (!dir.exists("Figure_S5")) {dir.create("Figure_S5")}
+ggsave(plot = Fig_5B_plot, "Figure_S5B_Stacked_Vln_WT1_CAFs.pdf", width = 3.75, height = 4.4444444, units = "in", path = "Figure_S5/")
+```
+
+# Figure S5C
+```{r}
+Fig_5C_plot <- VlnPlot(CAFs, features =  c("PI16", "APOD", "PRG4", "SBSPON"), assay = "RNA", pt.size = 0, stack = T, flip = T, fill.by = "ident") + NoLegend() + theme(axis.text.x = element_text(angle = 90, hjust=1))
+
+if (!dir.exists("Figure_S5")) {dir.create("Figure_S5")}
+ggsave(plot = Fig_5C_plot, "Figure_S5C_Stacked_Vln_PI16_CAFs.pdf", width = 3.75, height = 4.4444444, units = "in", path = "Figure_S5/")
+```
+
+# Figure S5D
+```{r}
+Fig_5D_plot <- VlnPlot(CAFs, features =  c("ADIRF", "CRIP1", "RGS5", "MCAM"), assay = "RNA", pt.size = 0, stack = T, flip = T, fill.by = "ident") + NoLegend() + theme(axis.text.x = element_text(angle = 90, hjust=1))
+
+if (!dir.exists("Figure_S5")) {dir.create("Figure_S5")}
+ggsave(plot = Fig_5D_plot, "Figure_S2M_Stacked_Vln_CAP_like_CAFs.pdf", width = 3.75, height = 4.4444444, units = "in", path = "Figure_S5/")
+```
+
+
+# Validation of CAF markers in Peng
+The CAF markers identified in FAP+ CAFs in our study are validated in the publically available dataset by Peng et al, 2019. The Seurat object `Peng.Mesenchymal.Cells.rPCA.integrated.RDS` was generated as described in the pre-processing r markdown `Figure_1_&_2_Pre_Processing.Rmd`
+```{r}
+Peng.Mesenchymal.Cells <- readRDS("Peng.Mesenchymal.Cells.rPCA.integrated.RDS")
+```
+
+A function that adds a z-score in the metadata of a seurat object. The signature should be a character vector
+```{r}
+Add_Z<-function(in_SO, in_sig, Z_name){
+  
+  DefaultAssay(in_SO) <- "RNA"
+  #verifies the genes are part of the seurat object
+  in_sig<-in_sig[in_sig %in% rownames(in_SO)]
+  
+   # Genes which are 0 in >95% of cells are removed
+  long_NC <- in_SO@assays$RNA@data[in_sig,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) %>% 
+    group_by(Gene) %>% 
+    summarise(prop_zeros = sum(NC == 0)/n()) %>% 
+    filter(prop_zeros <= 0.95) %>% 
+    select(-prop_zeros)
+    
+  # NC is extracted from the SO
+    long_NC <- in_SO@assays$RNA@data[long_NC$Gene,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) 
+  
+  # Signature scores are calculated for each cell
+  get_zs<-function(in_sign){
+    Z_scores<-long_NC %>%
+      filter(Gene %in% in_sign) %>% 
+      group_by(Gene) %>%
+      mutate(Z = (NC - mean(NC)) / sd(NC)) %>%
+      drop_na() %>% 
+      group_by(Cell) %>%
+      summarise(sign_Z = mean(Z) %>% round(2)) %>%
+      rename(!!Z_name := sign_Z)
+    
+    return(Z_scores)
+  }
+  
+  Z_df<-get_zs(in_sig) 
+ 
+  # Z-score is added to the metadata
+  in_SO@meta.data<-in_SO@meta.data %>% 
+    rownames_to_column("Cell") %>% 
+    left_join(Z_df, by="Cell") %>% 
+    column_to_rownames("Cell")
+  
+  return(in_SO)
+}
+```
+
+# Subset and re-cluster CAFs
+```{r}
+Peng.CAFs <- subset(Peng.Mesenchymal.Cells.rPCA.integrated, idents = c("CAFs 1", "CAFs 2"))
+DefaultAssay(Peng.CAFs) <- "RNA"
+  Peng.CAFs <- FindVariableFeatures(Peng.CAFs, selection.method = "vst", nfeatures = 3000)
+  DefaultAssay(Peng.CAFs) <- "integrated"
+  Peng.CAFs <- ScaleData(Peng.CAFs, verbose = FALSE)
+  Peng.CAFs <- RunPCA(Peng.CAFs, npcs = 50, verbose = FALSE)
+  Peng.CAFs <- RunUMAP(Peng.CAFs, reduction = "pca", dims = 1:30)
+  Peng.CAFs <- FindNeighbors(Peng.CAFs, reduction = "pca", dims = 1:30)
+  Peng.CAFs <- FindClusters(Peng.CAFs, resolution = 0.8)
+  DimPlot(Peng.CAFs, reduction = "umap", label = T, pt.size = 1)
+  
+```
+
+# Read in CAF subtype markers
+The marker's lists are available in supplementary table S5 of the paper. The code to generate the markers lists is described above.
+```{r}
+WT1.pos.iCAF.Markers <- c("MMP23B", "ERRFI1", "SRM", "PLA2G2A", "ZNF593", "SH3BGRL3", "PODN", "NEXN", "CCN1", "F3", "S100A10", "S100A16", "LMNA", "CRABP2", "UAP1", "ABL2", "CHI3L1", "CD34", "OSR1", "CYP1B1", "EFEMP1", "UGP2", "CYTOR", "IL1R1", "SLC20A1", "COL3A1", "MYO1B", "EEF1B2", "SCG2", "SERPINE2", "NCL", "LRRFIP1", "TWIST2", "ANKRD28", "GNL3", "ABI3BP", "CCDC80", "FSTL1", "PTX3", "MLF1", "RPL22L1", "ATP13A3", "UGDH", "ANK2", "SFRP2", "SCRG1", "IL6ST", "MAP1B", "LHFPL2", "LOX", "PDLIM4", "GPX3", "SLIT3", "DUSP1", "NOP16", "GFPT2", "TUBB2A", "PXDC1", "CLIC1", "TNXB", "RPS18", "HMGA1", "PI16", "TENT5A", "SGK1", "SOD2", "SMOC2", "ELN", "STEAP1", "PCOLCE", "SERPINE1", "NAMPT", "CCDC71L", "CAV1", "FLNC", "PDGFRL", "CLU", "SFRP1", "PENK", "COL14A1", "HAS2", "MYC", "ARC", "AL583785.1", "NFIB", "PLIN2", "ANXA1", "NTRK2", "OGN", "TXN", "PAPPA", "ARPC5L", "PTGDS", "TUBB4B", "PFKP", "KLF6", "CELF2", "VIM", "CXCL12", "DDX21", "PLAC9", "RGS10", "LSP1", "H19", "IGF2", "SPON1", "LDHA", "WT1", "CD44", "FOSL1", "CD248", "CLCF1", "MRGPRF", "PDGFD", "NNMT", "OAF", "MFAP5", "YBX3", "GPRC5A", "EMP1", "MGP", "MGST1", "TUBA1C", "LIMA1", "IGFBP6", "ITGA5", "CD63", "SRGAP1", "CCT2", "HELLPAR", "IGF1", "RAN", "MEDAG", "RGCC", "TPT1", "NFKBIA", "FRMD6", "GNPNAT1", "FERMT2", "HIF1A", "SERPINA3", "BDKRB1", "CRIP1", "THBS1", "EIF3J", "FBN1", "FGF7", "ANXA2", "CILP", "CTSH", "RPS17", "ALDH1A3", "TNFRSF12A", "VASN", "C16orf89", "GSPT1", "MT2A", "MT1E", "MT1M", "MT1A", "MT1X", "TPPP3", "COTL1", "ZNF469", "CYBA", "TUBB3", "SERPINF1", "EIF4A1", "MAP2K3", "CCL2", "IGFBP4", "NGFR", "LRRC59", "NME1", "SPHK1", "SOCS3", "METRNL", "COLEC12", "TUBB6", "SNRPD1", "NFATC1", "CFD", "C3", "ANGPTL4", "JUND", "HSPB6", "ZFP36", "PLAUR", "APOE", "VASP", "EMP3", "HAS1", "MYADM", "NOP56", "CPXM1", "PROCR", "SAMHD1", "SULF2", "PTGIS", "NFATC2", "DOK5", "RCAN1", "COL6A1", "FBLN1", "SRPX", "ITM2A", "ACSL4", "CHRDL1", "GPC3")
+
+ENG.pos.iCAF.Markers <- c("NFIA", "LMO4", "TXNIP", "CFH", "HSD11B1", "AGT", "COLEC11", "LTBP1", "CD302", "SCN7A", "FRZB", "TFPI", "PID1", "EPHA3", "BOC", "ZBTB20", "RBP1", "RARRES1", "APOD", "SOD3", "IGFBP7", "SYNPO2", "SPRY1", "HAND2", "HAND2-AS1", "C7", "SELENOP", "F2R", "NR2F1", "MOXD1", "SFRP4", "HGF", "GNG11", "CPED1", "MTUS1", "CEBPD", "RUNX1T1", "ALDH1A1", "TLE4", "ASPN", "PTCH1", "COL15A1", "GSN", "ENG", "DEPP1", "ADIRF", "IFITM1", "DKK3", "SERPING1", "CTSC", "FXYD6", "C1S", "A2M", "BTG1", "TSC22D1", "ITM2B", "PCDH9", "RNASE4", "NR2F2", "LITAF", "MFAP4", "MTRNR2L1", "ABCA6", "CYGB", "FXYD1", "LTBP4", "CST3", "TGM2", "TSHZ2", "MIR99AHG", "TIMP1", "XIST", "FLRT2", "DDIT3", "HSPA1B", "DNAJB1", "HSPA1A", "LEPR", "FOS", "IER2", "EGR1", "ADH1B", "FOSB", "JUN", "DPT")
+
+ENG.pos.myCAF.Markers <- c("IGFBP5", "RBP1", "HOPX", "IGFBP7", "EDNRA", "ITGA1", "ENC1", "F2R", "COL10A1", "ANO1", "NTM", "POSTN", "COL4A1", "COL4A2", "STRA6", "NR2F2", "MMP28", "PPP1R14A", "LAMP5", "CST1", "CST2", "TSHZ2", "TIMP1", "APOD", "CCDC102B", "SPON2", "SULF1", "ISLR", "DPEP1", "IGFBP3", "XIST", "SLC6A6", "COL18A1", "MEST", "CDKN2B", "MATN3", "HES1", "THBS4", "PCSK1N", "CXCL14", "ITGBL1")
+
+LRRC15.pos.myCAF.Markers <- c("ISG15", "MFAP2", "CAPZB", "NBL1", "ID3", "COL8A2", "COL11A1", "CTSK", "CSRP1", "CD55", "MATN3", "SDC1", "ANTXR1", "TMSB10", "FAP", "COL5A2", "FN1", "ITM2C", "ARL4C", "VGLL4", "TMEM158", "COL8A1", "ITGB5", "TM4SF1", "TRIM59", "LRRC15", "PDGFC", "CPE", "PALLD", "PDLIM3", "NPR3", "C1QTNF3", "RAI14", "VCAN", "EDIL3", "TGFBI", "SPARC", "F13A1", "PTK7", "RUNX2", "COL12A1", "MARCKS", "COL10A1", "ENPP1", "PERP", "FNDC1", "THBS2", "ACTB", "TWIST1", "SUGCT", "INHBA", "AEBP1", "IGFBP3", "FZD1", "COL1A2", "LRRC17", "CALU", "CALD1", "RARRES2", "CTSB", "LOXL2", "SULF1", "FABP5", "CTHRC1", "FBXO32", "TPM2", "GOLM1", "COL5A1", "NET1", "PLAU", "ACTA2", "ADRA2A", "PLPP4", "HTRA1", "MDK", "SERPINH1", "PRSS23", "MMP7", "CADM1", "TAGLN", "NTM", "CD9", "MFAP5", "PPFIBP1", "MYL6", "EPYC", "NUAK1", "GJB2", "POSTN", "MMP14", "DIO2", "IFI27", "GREM1", "TPM1", "ITGA11", "PKM", "LOXL1", "HCFC1R1", "IL32", "TGFB1I1", "CDH11", "CMTM3", "MAF", "C17orf49", "COL1A1", "P4HB", "MYL12A", "GALNT1", "GRP", "CNN2", "TPM4", "IGFL2", "RIN2", "ID1", "MYL9", "CTSZ", "MMP11", "TIMP3", "MYH9", "LGALS1", "CD99", "MXRA5", "RPS4Y1", "MYLK", "IFI6", "HSPA5")
+
+ifCAF.Markers <- c("CXCL10", "OASL", "CXCL11", "OAS3", "CMPK2", "IFIH1", "OAS2", "IFIT3", "IFIT1", "OAS1", "RSAD2", "IFI44L", "IFIT2", "MX1", "GBP4", "DDX58", "XAF1", "PARP14", "STAT1", "ISG15", "HERC5", "MX2", "USP18", "IRF7", "IFI6", "EPSTI1", "PSMB9", "LAP3", "IFI35", "IFI44", "TNFSF10", "DDX60L", "IFITM1", "TAP1", "PLSCR1", "UBE2L6", "TYMP", "TNFSF13B", "LY6E", "BST2", "RNF213", "EIF2AK2", "SAMD9", "SAMD9L", "SP100", "NMI", "PSMB8", "PSME2", "SP110", "PARP9", "GBP1", "LGALS9", "APOL6", "IRF9", "ISG20", "TRIM22", "SHFL", "SLFN5", "IFI30", "STAT2", "HLA-A", "CTSS", "B2M", "HLA-B", "IFITM3", "HLA-E", "APOL2", "HLA-C", "WARS", "VCAM1", "PPM1K", "HAPLN3", "PLAAT4", "IFI16", "GBP2", "APOL1", "BHLHE41", "IL32", "VAMP5", "CCL11", "IFI27", "POSTN", "MAFB", "SOD2", "IRF1", "ICAM1", "MMP11", "FBXO32", "TNFAIP2")
+
+PI16.CAF.Markers <- c("VIT", "P2RY14", "FOXD1", "SBSPON", "CDH19", "MCTP1", "SLCO1C1", "PRG4", "MEOX2", "SFRP5", "CLDN1", "LINC01197", "TCF4", "APOD", "TAC1", "PI16", "LYPD1", "C1QTNF4", "CAPN6", "BMP7", "FMO2", "ABCA8", "ECRG4", "GSN", "SCN7A", "THBS4", "FOXS1", "SHOX2", "HEY1", "NR2F2", "DCN", "SMAD9", "RBMS3", "PGF", "EBF2", "ADIRF", "DOCK9", "LTBP4", "ABCA10", "ABCA6", "ZBTB20", "ITM2A", "SPTBN1", "MTRNR2L1", "FZD2", "ITM2B", "JAM2", "NR2F1", "MATN2", "OMD", "STARD13", "APCDD1", "NFIA", "RAMP2", "SOX9", "ADGRD1", "PRELP", "ESM1", "PLXDC1", "PTEN", "ETV1", "TFPI", "IGFBP5", "OLFML2B", "NR2F2-AS1", "IFI27", "ABLIM1", "ID1", "RGL1", "SPRY2", "KLF5", "VLDLR", "MTUS1", "ARL4A", "CYP1B1", "ELOB", "SHISA2", "SESN3", "NRP2", "SPARCL1", "BAMBI", "TNRC6C", "ZEB1", "LRP1", "PLAC9", "HEYL", "ID3", "PIK3R1", "ABCA9", "AKAP12", "BNC2", "H1FX", "MTRNR2L8", "KIF22", "DBNDD2", "EDNRA", "IGFBP6", "LSP1", "TSHZ2", "CHRDL1", "CXCL14", "IER5L", "CST1", "LEPR", "MTRNR2L12", "A2M", "NOVA1", "RSAD2", "WNT5A", "IGFBP2", "IGFBP3", "RDH10")
+
+VEGFA.CAF.Markers <- c("SPINK1", "STC1", "CA9", "HIF1A-AS3", "C15orf48", "TREM1", "MME", "SPAG4", "CA12", "ADM", "TGFBI", "UPP1", "SLC16A3", "GAPDH", "PGK1", "ENO1", "C5orf46", "ERO1A", "RPL8", "PTGES", "MIF", "DDIT4", "LINC01705", "RPS4Y1", "ENO2", "EGLN3", "P4HA2", "HILPDA", "P4HA1", "CST7", "BNIP3", "RPL18", "FXYD5", "P4HB", "EIF1", "LDHA", "SLC38A5", "GAS5", "LOXL2", "RPL11", "RPL14", "FAU", "SLC2A3", "TPI1", "RPL10", "COL11A1", "BNIP3L", "ZFAS1", "IL32", "TM4SF1", "VEGFA", "RPS3", "RPS13", "FAM162A", "RPS19", "ATP5MC2", "CD44", "RPS27A", "RPL32", "CADM1", "CCNI", "BCAT1", "ERRFI1", "PLP2", "PLAUR", "RPL29", "RPL24", "SLC2A1", "CCND1", "LOX", "RPL17", "GREM1", "RPS5", "RPL36AL", "GBE1", "TMEM91", "NDRG1", "SNHG5", "DARS", "RPL12", "RACK1", "CPE", "RPL9", "SNHG29", "RPS16", "HLA-A", "FTL", "RPL26", "HLA-B", "C4orf3", "RPL18A", "MT2A", "FN1", "SLC39A14", "FTH1", "MYDGF", "VKORC1", "RPL13", "METTL26", "SEC61G", "SNHG12", "ANAPC16", "CANX", "PERP", "EPB41L4A-AS1", "SERP1", "CHCHD10", "INSIG2", "CD68", "TAF1D", "UBC", "RSL24D1", "TMED9", "PDIA6", "HSPA5", "H1F0", "RPS6", "RPS18", "PLOD2", "ACTG1", "AC108134.2", "PGAM1", "ARL4C", "NOP53", "GJB2", "LRRFIP1", "MXI1", "TSPO", "TCEA1", "BTG1", "MXRA7", "PLOD1", "TMEM158", "EMP3", "TMEM45A", "BHLHE40", "SERPINA3", "RPL3", "THBS2", "LMAN1", "SH3BP5", "ID2", "CCDC85B", "HSP90B1", "SSR3", "GJA1", "SCG5", "TIMP3", "TWIST1", "RPS20", "MT1E", "RCAN1", "SELENOK", "DNAJB9", "ANGPTL4", "ATF5", "HERPUD1", "HLA-DPA1")
+
+WT1.CAF.Markers <- c("FDCSP", "EPYC", "SEZ6L2", "ST6GALNAC5", "TSPAN2", "SLC12A8", "ADAM12", "CDH2", "RPS21", "COL3A1", "RPL28", "GPC6", "TDO2", "COL1A1", "RPS19", "MMD", "CKAP4", "RRBP1", "RPS28", "RPS2", "RPL39", "MMP23B", "RPL36", "CRABP2", "ATP1B1", "RPL37", "RPL36A", "COL1A2", "RPS3", "PLOD2", "CYBA", "MXRA5", "COL5A2", "RPS17", "RPL37A", "COL5A1", "DHRS3", "RPS29", "SPARC", "SCG2", "RCN1", "RARRES2", "HIF1A", "RCN3", "ENAH", "PTGIS", "EEF1B2", "CTHRC1", "VCAN", "CPXM1", "OLFML3", "IL1R1", "DPEP1", "COL6A3", "CLEC11A", "FNDC1", "KLF6", "S100A10", "GAS1", "RPL22L1", "COMP", "PDLIM3", "NFYB", "TGFB3", "TLE4", "SERPINE2", "INHBA")
+
+CAP.Like.CAF.Markers <- c("TINAGL1", "MUSTN1", "RGS5", "NDUFA4L2", "MCAM", "MYH11", "CRIP1", "PLN", "CST1", "CCL2", "ADIRF", "PPP1R14A", "TAGLN", "C11orf96", "CLU", "C1orf56", "ACTA2", "MYL9", "DSTN", "LRRC75A", "SOD3", "CTNNB1", "CSRP2", "CCN2", "CRIP2", "HNRNPH1", "S100A4", "MTRNR2L1")
+```
+
+
+If you need to repeat and remove all Z-scores from metadat
+```{r}
+Peng.CAFs@meta.data <- Peng.CAFs@meta.data %>%
+  select(-contains("CAFs"))
+```
+
+
+Add CAF subtype Z scores to object
+```{r}
+Peng.CAFs <- Add_Z(Peng.CAFs, WT1.pos.iCAF.Markers, "WT1+ iCAFs")
+Peng.CAFs <- Add_Z(Peng.CAFs, ENG.pos.iCAF.Markers, "ENG+ iCAFs")
+Peng.CAFs <- Add_Z(Peng.CAFs, ENG.pos.myCAF.Markers, "ENG+ myCAFs")
+Peng.CAFs <- Add_Z(Peng.CAFs, LRRC15.pos.myCAF.Markers, "LRRC15+ myCAFs")
+Peng.CAFs <- Add_Z(Peng.CAFs, ifCAF.Markers, "ifCAFs")
+Peng.CAFs <- Add_Z(Peng.CAFs, PI16.CAF.Markers, "PI16+ CAFs")
+Peng.CAFs <- Add_Z(Peng.CAFs, VEGFA.CAF.Markers, "VEGFA+ CAFs")
+Peng.CAFs <- Add_Z(Peng.CAFs, CAP.Like.CAF.Markers, "CAP-like CAFs")
+Peng.CAFs <- Add_Z(Peng.CAFs, WT1.CAF.Markers, "WT1+ CAFs")
+```
+
+
+```{r}
+VlnPlot(Peng.CAFs, "WT1+ iCAFs", pt.size = 0)
+VlnPlot(Peng.CAFs, "ENG+ iCAFs", pt.size = 0)
+VlnPlot(Peng.CAFs, "ENG+ myCAFs", pt.size = 0)
+VlnPlot(Peng.CAFs, "LRRC15+ myCAFs", pt.size = 0)
+VlnPlot(Peng.CAFs, "ifCAFs", pt.size = 0)
+VlnPlot(Peng.CAFs, "PI16+ CAFs", pt.size = 0)
+VlnPlot(Peng.CAFs, "VEGFA+ CAFs", pt.size = 0)
+VlnPlot(Peng.CAFs, "CAP-like CAFs", pt.size = 0)
+VlnPlot(Peng.CAFs, "WT1+ CAFs", pt.size = 0)
+```
+
+
+# "0" = "ENG+ iCAFs", "1" = "LRRC15+ myCAFs 1", "2" = "LRRC15+ myCAFs 2", "3" = "WT1+ iCAFs", "4" = "LRRC15+ myCAFs 3", "5" = "ENG+ myCAFs 1", "6" = "VEGFA+ CAFs 2", "7" = "ENG+ myCAFs 2", "8" = "PI16+ CAFs", "9" = "ifCAFs", "10" = "Other"
+```{r}
+Peng.CAFs@active.ident <- factor(x = Peng.CAFs@active.ident, levels = c('1', '2', '4', '5', '7', '0', '3', '6', '8', '9', '10'))
+```
+
+# Figure S5E-G
+```{r}
+p1 <-  DimPlot(Peng.CAFs, reduction = "umap", label = T, pt.size = 1) + NoLegend() + ggtitle("Peng et al, 2019 - PDAC CAFs")
+p2 <- VlnPlot(Peng.CAFs, features = "FAP", assay = "RNA", pt.size = 0) + NoLegend()
+p3 <- VlnPlot(Peng.CAFs, "LRRC15+ myCAFs", pt.size = 0) + NoLegend()
+p4 <- VlnPlot(Peng.CAFs, "ENG+ myCAFs", pt.size = 0) + NoLegend()
+p5 <- VlnPlot(Peng.CAFs, "ENG+ iCAFs", pt.size = 0) + NoLegend()
+p6 <- VlnPlot(Peng.CAFs, "WT1+ iCAFs", pt.size = 0) + NoLegend()
+p7 <- VlnPlot(Peng.CAFs, "VEGFA+ CAFs", pt.size = 0) + NoLegend()
+p8 <- VlnPlot(Peng.CAFs, "PI16+ CAFs", pt.size = 0) + NoLegend()
+p9 <- VlnPlot(Peng.CAFs, "ifCAFs", pt.size = 0) + NoLegend()
+p10 <- VlnPlot(Peng.CAFs, "CAP-like CAFs", pt.size = 0) + NoLegend()
+p11 <- VlnPlot(Peng.CAFs, "WT1+ CAFs", pt.size = 0) + NoLegend()
+
+Fig_5EG_plot <- plot_grid(p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, nrow = 2)
+
+if (!dir.exists("Figure_S5")) {dir.create("Figure_S5")}
+ggsave(plot = Fig_5EG_plot, "Figure_S5E_G_Validation.pdf", width = 15, height = 6, units = "in", path = "Figure_S5/")
+```
+
+

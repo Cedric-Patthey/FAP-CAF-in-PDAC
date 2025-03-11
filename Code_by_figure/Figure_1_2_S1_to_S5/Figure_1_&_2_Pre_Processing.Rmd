@@ -1,0 +1,1003 @@
+---
+title: "Human_PDAC_FAP_mesenchymal_10x_scSeq"
+author: "Joshua"
+date: "6/14/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Summary
+The following code describes the analysis of single cell RNAseq data from 6 human PDAC samples where FAP+ mesenchymal cells were FACS-sorted for single cell sequencing. This code was used to produce figures 1, 2 and S1 to S5 of Cumming et al, 2025. 
+
+The input data is the raw UMI count from the single cell RNA-seq data generated with 10x Chromium for 6 samples. The raw fastq files are available via the Swedish National Data service (SND) upon request. The raw UMI count tables and the output of the present code (two Seurat objects are available as RDS files called `FAP.Mesenchymal.Souped.Singlets.rPCA.integrated.RDS` and `CAFs.rPCA.integrated.RDS`) are available on SND at https://doi.org/10.5878/0ehq-1434.
+
+The code to generate the raw umi count is described in the R markdown called `Human_PDAC_FAP_cells_6s_fastq_to_read_count.Rmd`
+
+The Sample metadata required was prepared manually and is available in the file `Human_PDAC_FAP_cells_6s_sample_metadata.xlsx`
+
+Preparation of integrated Seurat objects (i.e pre-processing) for publically available single cell data is described below
+
+# Dependencies
+```{r}
+library(SoupX)  # version 1.6.2
+library(tidyverse)  
+library(Seurat)  # version 4.1.0
+library(patchwork)
+library(DoubletFinder)  # version 2.0.3
+
+library(decoupleR)  # version 2.0.1
+
+library(stringr)
+library(cowplot)
+```
+
+
+# Ambient RNA removal, doublet removal, integration and clustering of human FAP CAFs
+The 6 samples are loaded and normalized/scled separately. SoupX is run on the samples separately to correct for ambiant RNA
+```{r}
+s1_tod = Seurat::Read10X('S1_raw_feature_bc_matrix/')
+s1_toc = Seurat::Read10X('S1_filtered_feature_bc_matrix/')
+S1_sc = SoupChannel(s1_tod,s1_toc)
+```
+
+```{r}
+S1 <- Read10X(data.dir = "S1_filtered_feature_bc_matrix/")
+S1 <- CreateSeuratObject(counts = S1, project = "FAP.CAF")
+```
+
+```{r}
+S1 <- NormalizeData(S1, normalization.method = "LogNormalize", scale.factor = 10000)
+S1 <- FindVariableFeatures(S1, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S1)
+S1 <- ScaleData(S1, features = all.genes)
+S1 <- RunPCA(S1, features = VariableFeatures(object = S1))
+S1 <- FindNeighbors(S1, dims = 1:50)
+S1 <- FindClusters(S1, resolution = 0.8)
+S1 <- RunUMAP(S1, dims = 1:50)
+```
+
+```{r}
+S1_sc = setClusters(S1_sc,S1@active.ident)
+S1_sc = setDR(S1_sc,S1@reductions$umap@cell.embeddings)
+S1_sc = autoEstCont(S1_sc)
+S1_sc = autoEstCont(S1_sc,priorRhoStdDev=0.1)
+S1_out = adjustCounts(S1_sc, roundToInt = T)
+#DropletUtils:::write10xCounts('S1_strainedCounts',S1_out)
+```
+
+```{r}
+s2_tod = Seurat::Read10X('S2_raw_feature_bc_matrix/')
+s2_toc = Seurat::Read10X('S2_filtered_feature_bc_matrix/')
+S2_sc = SoupChannel(s2_tod,s2_toc)
+```
+
+```{r}
+S2 <- Read10X(data.dir = "S2_filtered_feature_bc_matrix/")
+S2 <- CreateSeuratObject(counts = S2, project = "FAP.CAF")
+S2 <- NormalizeData(S2, normalization.method = "LogNormalize", scale.factor = 10000)
+S2 <- FindVariableFeatures(S2, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S2)
+S2 <- ScaleData(S2, features = all.genes)
+S2 <- RunPCA(S2, features = VariableFeatures(object = S2))
+S2 <- FindNeighbors(S2, dims = 1:50)
+S2 <- FindClusters(S2, resolution = 0.8)
+S2 <- RunUMAP(S2, dims = 1:50)
+```
+
+```{r}
+S2_sc = setClusters(S2_sc,S2@active.ident)
+S2_sc = setDR(S2_sc,S2@reductions$umap@cell.embeddings)
+S2_sc = autoEstCont(S2_sc)
+S2_sc = autoEstCont(S2_sc,priorRhoStdDev=0.1)
+S2_out = adjustCounts(S2_sc, roundToInt = T)
+#DropletUtils:::write10xCounts('S2_strainedCounts',S2_out)
+```
+
+```{r}
+s3_tod = Seurat::Read10X('S3_raw_feature_bc_matrix/')
+s3_toc = Seurat::Read10X('S3_filtered_feature_bc_matrix/')
+S3_sc = SoupChannel(s3_tod,s3_toc)
+```
+
+```{r}
+S3 <- Read10X(data.dir = "S3_filtered_feature_bc_matrix/")
+S3 <- CreateSeuratObject(counts = S3, project = "FAP.CAF")
+S3 <- NormalizeData(S3, normalization.method = "LogNormalize", scale.factor = 10000)
+S3 <- FindVariableFeatures(S3, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S3)
+S3 <- ScaleData(S3, features = all.genes)
+S3 <- RunPCA(S3, features = VariableFeatures(object = S3))
+S3 <- FindNeighbors(S3, dims = 1:50)
+S3 <- FindClusters(S3, resolution = 0.8)
+S3 <- RunUMAP(S3, dims = 1:50)
+```
+
+```{r}
+S3_sc = setClusters(S3_sc,S3@active.ident)
+S3_sc = setDR(S3_sc,S3@reductions$umap@cell.embeddings)
+S3_sc = autoEstCont(S3_sc)
+S3_sc = autoEstCont(S3_sc,priorRhoStdDev=0.1)
+S3_out = adjustCounts(S3_sc, roundToInt = T)
+#DropletUtils:::write10xCounts('S3_strainedCounts',S3_out)
+```
+
+```{r}
+s4_tod = Seurat::Read10X('S4_raw_feature_bc_matrix/')
+s4_toc = Seurat::Read10X('S4_filtered_feature_bc_matrix/')
+S4_sc = SoupChannel(s4_tod,s4_toc)
+```
+
+
+```{r}
+S4 <- Read10X(data.dir = "S4_filtered_feature_bc_matrix/")
+S4 <- CreateSeuratObject(counts = S4, project = "FAP.CAF")
+S4 <- NormalizeData(S4, normalization.method = "LogNormalize", scale.factor = 10000)
+S4 <- FindVariableFeatures(S4, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S4)
+S4 <- ScaleData(S4, features = all.genes)
+S4 <- RunPCA(S4, features = VariableFeatures(object = S4))
+S4 <- FindNeighbors(S4, dims = 1:50)
+S4 <- FindClusters(S4, resolution = 0.8)
+S4 <- RunUMAP(S4, dims = 1:50)
+```
+
+```{r}
+S4_sc = setClusters(S4_sc,S4@active.ident)
+S4_sc = setDR(S4_sc,S4@reductions$umap@cell.embeddings)
+S4_sc = autoEstCont(S4_sc)
+S4_sc = autoEstCont(S4_sc,priorRhoStdDev=0.1)
+S4_out = adjustCounts(S4_sc, roundToInt = T)
+#DropletUtils:::write10xCounts('S4_strainedCounts',S4_out)
+```
+
+```{r}
+s5_tod = Seurat::Read10X('S5_raw_feature_bc_matrix/')
+s5_toc = Seurat::Read10X('S5_filtered_feature_bc_matrix/')
+S5_sc = SoupChannel(s5_tod,s5_toc)
+```
+
+```{r}
+S5 <- Read10X(data.dir = "S5_filtered_feature_bc_matrix/")
+S5 <- CreateSeuratObject(counts = S5, project = "FAP.CAF")
+S5 <- NormalizeData(S5, normalization.method = "LogNormalize", scale.factor = 10000)
+S5 <- FindVariableFeatures(S5, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S5)
+S5 <- ScaleData(S5, features = all.genes)
+S5 <- RunPCA(S5, features = VariableFeatures(object = S5))
+S5 <- FindNeighbors(S5, dims = 1:50)
+S5 <- FindClusters(S5, resolution = 0.8)
+S5 <- RunUMAP(S5, dims = 1:50)
+```
+
+```{r}
+S5_sc = setClusters(S5_sc,S5@active.ident)
+S5_sc = setDR(S5_sc,S5@reductions$umap@cell.embeddings)
+S5_sc = autoEstCont(S5_sc)
+S5_sc = autoEstCont(S5_sc,priorRhoStdDev=0.1)
+S5_out = adjustCounts(S5_sc, roundToInt = T)
+#DropletUtils:::write10xCounts('S5_strainedCounts',S5_out)
+```
+
+```{r}
+s6_tod = Seurat::Read10X('S6_raw_feature_bc_matrix/')
+s6_toc = Seurat::Read10X('S6_filtered_feature_bc_matrix/')
+S6_sc = SoupChannel(s6_tod,s6_toc)
+```
+
+```{r}
+S6 <- Read10X(data.dir = "S6_filtered_feature_bc_matrix/")
+S6 <- CreateSeuratObject(counts = S6, project = "FAP.CAF")
+S6 <- NormalizeData(S6, normalization.method = "LogNormalize", scale.factor = 10000)
+S6 <- FindVariableFeatures(S6, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S6)
+S6 <- ScaleData(S6, features = all.genes)
+S6 <- RunPCA(S6, features = VariableFeatures(object = S6))
+S6 <- FindNeighbors(S6, dims = 1:50)
+S6 <- FindClusters(S6, resolution = 0.8)
+S6 <- RunUMAP(S6, dims = 1:50)
+```
+
+```{r}
+S6_sc = setClusters(S6_sc,S6@active.ident)
+S6_sc = setDR(S6_sc,S6@reductions$umap@cell.embeddings)
+S6_sc = autoEstCont(S6_sc)
+S6_sc = autoEstCont(S6_sc,priorRhoStdDev=0.1)
+S6_out = adjustCounts(S6_sc, roundToInt = T)
+#DropletUtils:::write10xCounts('S6_strainedCounts',S6_out)
+```
+
+
+# Doublet removal
+Doublets are identified and removed with doubletFinder on each sample separately
+```{r}
+library(DoubletFinder)
+```
+
+```{r}
+S1_souped <- Read10X(data.dir = "S1_strainedCounts/", strip.suffix = T)
+S1_souped <- CreateSeuratObject(counts = S1_souped, project = "S1")
+S1_souped[["percent.mt"]] <- PercentageFeatureSet(S1_souped, pattern = "^MT-")
+S1_souped <- NormalizeData(S1_souped, normalization.method = "LogNormalize", scale.factor = 10000)
+S1_souped <- FindVariableFeatures(S1_souped, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S1_souped)
+S1_souped <- ScaleData(S1_souped, features = all.genes)
+S1_souped <- RunPCA(S1_souped, features = VariableFeatures(object = S1_souped))
+S1_souped <- FindNeighbors(S1_souped, dims = 1:50)
+S1_souped <- FindClusters(S1_souped, resolution = 1.2)
+S1_souped <- RunUMAP(S1_souped, dims = 1:50)
+```
+
+
+```{r}
+S1_souped <- subset(S1_souped, idents = c("0", "1", "2", "4", "5", "6", "7", "8", "13", "15", "16", "17"))
+S1_souped <- NormalizeData(S1_souped, normalization.method = "LogNormalize", scale.factor = 10000)
+S1_souped <- FindVariableFeatures(S1_souped, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S1_souped)
+S1_souped <- ScaleData(S1_souped, features = all.genes)
+S1_souped <- RunPCA(S1_souped, features = VariableFeatures(object = S1_souped))
+S1_souped <- FindNeighbors(S1_souped, dims = 1:50)
+S1_souped <- FindClusters(S1_souped, resolution = 0.8)
+S1_souped <- RunUMAP(S1_souped, dims = 1:50)
+```
+
+```{r}
+sweep.res.1 <- paramSweep_v3(S1_souped) 
+sweep.stats.1 <- summarizeSweep(sweep.res.1, GT = FALSE) 
+bcmvn.1 <- find.pK(sweep.stats.1)
+nExp <- round(ncol(S1_souped) * 0.054)  # expected doublets
+S1_souped <- doubletFinder_v3(S1_souped, pN = 0.25, pK = 0.25, nExp = nExp, PCs = 1:10)
+DF.name = colnames(S1_souped@meta.data)[grepl("DF.classification", colnames(S1_souped@meta.data))]
+S1_souped_singlets = S1_souped[, S1_souped@meta.data[, DF.name] == "Singlet"]
+S1_souped_singlets <- subset(S1_souped_singlets, subset = nFeature_RNA > 1000 & percent.mt < 10)
+#saveRDS(S1_souped_singlets, "S1_Souped_Singled.rds")
+```
+
+```{r}
+S2_souped <- Read10X(data.dir = "S2_strainedCounts/", strip.suffix = T)
+S2_souped <- CreateSeuratObject(counts = S2_souped, project = "S2")
+S2_souped[["percent.mt"]] <- PercentageFeatureSet(S2_souped, pattern = "^MT-")
+S2_souped <- NormalizeData(S2_souped, normalization.method = "LogNormalize", scale.factor = 10000)
+S2_souped <- FindVariableFeatures(S2_souped, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S2_souped)
+S2_souped <- ScaleData(S2_souped, features = all.genes)
+S2_souped <- RunPCA(S2_souped, features = VariableFeatures(object = S2_souped))
+S2_souped <- FindNeighbors(S2_souped, dims = 1:50)
+S2_souped <- FindClusters(S2_souped, resolution = 1.2)
+S2_souped <- RunUMAP(S2_souped, dims = 1:50)
+```
+
+```{r}
+S2_souped <- subset(S2_souped, idents = c("0", "1", "2", "4", "5", "6", "7", "8", "9", "10", "11", "13", "16", "18"))
+S2_souped <- NormalizeData(S2_souped, normalization.method = "LogNormalize", scale.factor = 10000)
+S2_souped <- FindVariableFeatures(S2_souped, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S2_souped)
+S2_souped <- ScaleData(S2_souped, features = all.genes)
+S2_souped <- RunPCA(S2_souped, features = VariableFeatures(object = S2_souped))
+S2_souped <- FindNeighbors(S2_souped, dims = 1:50)
+S2_souped <- FindClusters(S2_souped, resolution = 0.8)
+S2_souped <- RunUMAP(S2_souped, dims = 1:50)
+```
+
+```{r}
+sweep.res.2 <- paramSweep_v3(S2_souped) 
+sweep.stats.2 <- summarizeSweep(sweep.res.2, GT = FALSE) 
+bcmvn.2 <- find.pK(sweep.stats.2)
+nExp <- round(ncol(S2_souped) * 0.061)  # expected doublets
+S2_souped <- doubletFinder_v3(S2_souped, pN = 0.25, pK = 0.28, nExp = nExp, PCs = 1:10)
+DF.name = colnames(S2_souped@meta.data)[grepl("DF.classification", colnames(S2_souped@meta.data))]
+S2_souped_singlets = S2_souped[, S2_souped@meta.data[, DF.name] == "Singlet"]
+S2_souped_singlets <- subset(S2_souped_singlets, subset = nFeature_RNA > 1000 & percent.mt < 10)
+#saveRDS(S2_souped_singlets, "S2_Souped_Singlets.rds")
+```
+
+```{r}
+S3_souped <- Read10X(data.dir = "S3_strainedCounts/", strip.suffix = T)
+S3_souped <- CreateSeuratObject(counts = S3_souped, project = "S3")
+S3_souped[["percent.mt"]] <- PercentageFeatureSet(S3_souped, pattern = "^MT-")
+S3_souped <- NormalizeData(S3_souped, normalization.method = "LogNormalize", scale.factor = 10000)
+S3_souped <- FindVariableFeatures(S3_souped, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S3_souped)
+S3_souped <- ScaleData(S3_souped, features = all.genes)
+S3_souped <- RunPCA(S3_souped, features = VariableFeatures(object = S3_souped))
+S3_souped <- FindNeighbors(S3_souped, dims = 1:50)
+S3_souped <- FindClusters(S3_souped, resolution = 1.2)
+S3_souped <- RunUMAP(S3_souped, dims = 1:50)
+```
+
+```{r}
+S3_souped <- subset(S3_souped, idents = c("0", "3", "6", "7", "8", "9", "10", "12"))
+S3_souped <- NormalizeData(S3_souped, normalization.method = "LogNormalize", scale.factor = 10000)
+S3_souped <- FindVariableFeatures(S3_souped, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S3_souped)
+S3_souped <- ScaleData(S3_souped, features = all.genes)
+S3_souped <- RunPCA(S3_souped, features = VariableFeatures(object = S3_souped))
+S3_souped <- FindNeighbors(S3_souped, dims = 1:50)
+S3_souped <- FindClusters(S3_souped, resolution = 0.8)
+S3_souped <- RunUMAP(S3_souped, dims = 1:50)
+```
+
+```{r}
+sweep.res.3 <- paramSweep_v3(S3_souped) 
+sweep.stats.3 <- summarizeSweep(sweep.res.3, GT = FALSE) 
+bcmvn.3 <- find.pK(sweep.stats.3)
+nExp <- round(ncol(S3_souped) * 0.031)  # expected doublets
+S3_souped <- doubletFinder_v3(S3_souped, pN = 0.25, pK = 0.01, nExp = nExp, PCs = 1:10)
+DF.name = colnames(S3_souped@meta.data)[grepl("DF.classification", colnames(S3_souped@meta.data))]
+S3_souped_singlets = S3_souped[, S3_souped@meta.data[, DF.name] == "Singlet"]
+S3_souped_singlets <- subset(S3_souped_singlets, subset = nFeature_RNA > 1000 & percent.mt < 10)
+#saveRDS(S3_souped_singlets, "S3_Souped_Singlets.rds")
+```
+
+
+```{r}
+S4_souped <- Read10X(data.dir = "S4_strainedCounts/", strip.suffix = T)
+S4_souped <- CreateSeuratObject(counts = S4_souped, project = "S4")
+S4_souped[["percent.mt"]] <- PercentageFeatureSet(S4_souped, pattern = "^MT-")
+S4_souped <- NormalizeData(S4_souped, normalization.method = "LogNormalize", scale.factor = 10000)
+S4_souped <- FindVariableFeatures(S4_souped, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S4_souped)
+S4_souped <- ScaleData(S4_souped, features = all.genes)
+S4_souped <- RunPCA(S4_souped, features = VariableFeatures(object = S4_souped))
+S4_souped <- FindNeighbors(S4_souped, dims = 1:50)
+S4_souped <- FindClusters(S4_souped, resolution = 1.2)
+S4_souped <- RunUMAP(S4_souped, dims = 1:50)
+```
+
+```{r}
+S4_souped <- subset(S4_souped, idents = c("0", "1", "2", "3", "4", "5", "7", "8", "9", "12", "13", "15", "17", "18", "19", "20"))
+S4_souped <- NormalizeData(S4_souped, normalization.method = "LogNormalize", scale.factor = 10000)
+S4_souped <- FindVariableFeatures(S4_souped, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S4_souped)
+S4_souped <- ScaleData(S4_souped, features = all.genes)
+S4_souped <- RunPCA(S4_souped, features = VariableFeatures(object = S4_souped))
+S4_souped <- FindNeighbors(S4_souped, dims = 1:50)
+S4_souped <- FindClusters(S4_souped, resolution = 0.8)
+S4_souped <- RunUMAP(S4_souped, dims = 1:50)
+
+```
+
+```{r}
+sweep.res.4 <- paramSweep_v3(S4_souped) 
+sweep.stats.4 <- summarizeSweep(sweep.res.4, GT = FALSE) 
+bcmvn.4 <- find.pK(sweep.stats.4)
+nExp <- round(ncol(S4_souped) * 0.061)  # expected doublets
+S4_souped <- doubletFinder_v3(S4_souped, pN = 0.25, pK = 0.21, nExp = nExp, PCs = 1:10)
+DF.name = colnames(S4_souped@meta.data)[grepl("DF.classification", colnames(S4_souped@meta.data))]
+S4_souped_singlets = S4_souped[, S4_souped@meta.data[, DF.name] == "Singlet"]
+S4_souped_singlets <- subset(S4_souped_singlets, subset = nFeature_RNA > 1000 & percent.mt < 10)
+#saveRDS(S4_souped_singlets, "S4_Souped_Singlets.rds")
+```
+
+```{r}
+S5_souped <- Read10X(data.dir = "S5_strainedCounts/", strip.suffix = T)
+S5_souped <- CreateSeuratObject(counts = S5_souped, project = "S5")
+S5_souped[["percent.mt"]] <- PercentageFeatureSet(S5_souped, pattern = "^MT-")
+S5_souped <- NormalizeData(S5_souped, normalization.method = "LogNormalize", scale.factor = 10000)
+S5_souped <- FindVariableFeatures(S5_souped, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S5_souped)
+S5_souped <- ScaleData(S5_souped, features = all.genes)
+S5_souped <- RunPCA(S5_souped, features = VariableFeatures(object = S5_souped))
+S5_souped <- FindNeighbors(S5_souped, dims = 1:50)
+S5_souped <- FindClusters(S5_souped, resolution = 1.2)
+S5_souped <- RunUMAP(S5_souped, dims = 1:50)
+```
+
+```{r}
+S5_souped <- subset(S5_souped, idents = c("0", "1", "2", "3", "4", "5", "7", "8", "11", "12", "13", "14", "16"))
+S5_souped <- NormalizeData(S5_souped, normalization.method = "LogNormalize", scale.factor = 10000)
+S5_souped <- FindVariableFeatures(S5_souped, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S5_souped)
+S5_souped <- ScaleData(S5_souped, features = all.genes)
+S5_souped <- RunPCA(S5_souped, features = VariableFeatures(object = S5_souped))
+S5_souped <- FindNeighbors(S5_souped, dims = 1:50)
+S5_souped <- FindClusters(S5_souped, resolution = 0.8)
+S5_souped <- RunUMAP(S5_souped, dims = 1:50)
+```
+
+```{r}
+sweep.res.5 <- paramSweep_v3(S5_souped) 
+sweep.stats.5 <- summarizeSweep(sweep.res.5, GT = FALSE) 
+bcmvn.5 <- find.pK(sweep.stats.5)
+nExp <- round(ncol(S5_souped) * 0.054)  # expected doublets
+S5_souped <- doubletFinder_v3(S5_souped, pN = 0.25, pK = 0.24, nExp = nExp, PCs = 1:10)
+DF.name = colnames(S5_souped@meta.data)[grepl("DF.classification", colnames(S5_souped@meta.data))]
+S5_souped_singlets = S5_souped[, S5_souped@meta.data[, DF.name] == "Singlet"]
+S5_souped_singlets <- subset(S5_souped_singlets, subset = nFeature_RNA > 1000 & percent.mt < 10)
+#saveRDS(S5_souped_singlets, "S5_Souped_Singlets.rds")
+```
+
+```{r}
+S6_souped <- Read10X(data.dir = "S6_strainedCounts/", strip.suffix = T)
+S6_souped <- CreateSeuratObject(counts = S6_souped, project = "S6")
+S6_souped[["percent.mt"]] <- PercentageFeatureSet(S6_souped, pattern = "^MT-")
+S6_souped <- NormalizeData(S6_souped, normalization.method = "LogNormalize", scale.factor = 10000)
+S6_souped <- FindVariableFeatures(S6_souped, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S6_souped)
+S6_souped <- ScaleData(S6_souped, features = all.genes)
+S6_souped <- RunPCA(S6_souped, features = VariableFeatures(object = S6_souped))
+S6_souped <- FindNeighbors(S6_souped, dims = 1:50)
+S6_souped <- FindClusters(S6_souped, resolution = 1.2)
+S6_souped <- RunUMAP(S6_souped, dims = 1:50)
+```
+
+```{r}
+S6_souped <- subset(S6_souped, idents = c("0", "1", "2", "3", "4", "5", "6", "9", "10", "11", "12", "13", "14", "15"))
+S6_souped <- NormalizeData(S6_souped, normalization.method = "LogNormalize", scale.factor = 10000)
+S6_souped <- FindVariableFeatures(S6_souped, selection.method = "vst", nfeatures = 2000)
+all.genes <- rownames(S6_souped)
+S6_souped <- ScaleData(S6_souped, features = all.genes)
+S6_souped <- RunPCA(S6_souped, features = VariableFeatures(object = S6_souped))
+S6_souped <- FindNeighbors(S6_souped, dims = 1:50)
+S6_souped <- FindClusters(S6_souped, resolution = 0.8)
+S6_souped <- RunUMAP(S6_souped, dims = 1:50)
+```
+
+```{r}
+sweep.res.6 <- paramSweep_v3(S6_souped) 
+sweep.stats.6 <- summarizeSweep(sweep.res.6, GT = FALSE) 
+bcmvn.6 <- find.pK(sweep.stats.6)
+nExp <- round(ncol(S6_souped) * 0.054)  # expected doublets
+S6_souped <- doubletFinder_v3(S6_souped, pN = 0.25, pK = 0.09, nExp = nExp, PCs = 1:10)
+DF.name = colnames(S6_souped@meta.data)[grepl("DF.classification", colnames(S6_souped@meta.data))]
+S6_souped_singlets = S6_souped[, S6_souped@meta.data[, DF.name] == "Singlet"]
+S6_souped_singlets <- subset(S6_souped_singlets, subset = nFeature_RNA > 1000 & percent.mt < 10)
+#saveRDS(S6_souped_singlets, "S6_Souped_Singlets.rds")
+```
+
+```{r}
+S1_souped_singlets <- readRDS("S1_Souped_Singled.rds")
+S2_souped_singlets <- readRDS("S2_Souped_Singlets.rds")
+S3_souped_singlets <- readRDS("S3_Souped_Singlets.rds")
+S4_souped_singlets <- readRDS("S4_Souped_Singlets.rds")
+S5_souped_singlets <- readRDS("S5_Souped_Singlets.rds")
+S6_souped_singlets <- readRDS("S6_Souped_Singlets.rds")
+```
+
+
+```{r}
+FAP.CAF.6S.Souped.singlets <- merge(x = S1_souped_singlets, y = list(S2_souped_singlets, S3_souped_singlets, S4_souped_singlets, S5_souped_singlets, S6_souped_singlets), add.cell.ids = c("S1", "S2", "S3", "S4", "S5", "S6"))
+#saveRDS(FAP.CAF.6S.Souped.singlets, "FAP.Mesenchymal.6S.Souped.Singlets.RDS")
+```
+
+
+# Integration of 6 FAP mesenchymal samples
+The six samples are integrated by reciprocal PCA (rPCA). The cell cycle is regressed using the cell cycle related gene lists from the Regev lab (https://github.com/scverse/scanpy_usage/tree/master/180209_cell_cycle/data). 
+```{r}
+options(future.globals.maxSize = 8000 * 1024^2)
+library(Seurat)
+FAP.CAFs <- readRDS("FAP.CAF.6S.Souped.Singlets.RDS")
+
+human.s.genes<-c("MCM5", "PCNA", "TYMS", "FEN1", "MCM2", "MCM4", "RRM1", "UNG", "GINS2", "MCM6", "CDCA7", "DTL", "PRIM1", "UHRF1", "MLF1IP", "HELLS", "RFC2", "RPA2", "NASP", "RAD51AP1", "GMNN", "WDR76", "SLBP", "CCNE2", "UBR7", "POLD3", "MSH2", "ATAD2", "RAD51", "RRM2", "CDC45", "CDC6", "EXO1", "TIPIN", "DSCC1", "BLM", "CASP8AP2", "USP1", "CLSPN", "POLA1", "CHAF1B", "BRIP1", "E2F8") 
+
+human.g2m.genes<-c("HMGB2", "CDK1", "NUSAP1", "UBE2C", "BIRC5", "TPX2", "TOP2A", "NDC80", "CKS2", "NUF2", "CKS1B", "MKI67", "TMPO", "CENPF", "TACC3", "FAM64A", "SMC4", "CCNB2", "CKAP2L", "CKAP2", "AURKB", "BUB1", "KIF11", "ANP32E", "TUBB4B", "GTSE1", "KIF20B", "HJURP", "CDCA3", "HN1", "CDC20", "TTK", "CDC25C", "KIF2C", "RANGAP1", "NCAPD2", "DLGAP5", "CDCA2", "CDCA8", "ECT2", "KIF23", "HMMR", "AURKA", "PSRC1", "ANLN", "LBR", "CKAP5", "CENPE", "CTCF", "NEK2", "G2E3", "GAS2L3", "CBX5", "CENPA")
+
+
+sample.list <- SplitObject(FAP.CAFs, split.by = "orig.ident")
+sample.list <- lapply(X = sample.list, FUN = function(x) {
+    x <- NormalizeData(x)
+    x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 3000)
+})
+features <- SelectIntegrationFeatures(object.list = sample.list, nfeatures = 3000)
+sample.list <- lapply(X = sample.list, FUN = function(x) {
+    x <- CellCycleScoring(x, s.features = human.s.genes, g2m.features = human.g2m.genes, set.ident = TRUE)
+    x <- ScaleData(x, vars.to.regress = c("S.Score", "G2M.Score"), features = features, verbose = FALSE)
+    x <- RunPCA(x, features = features, verbose = FALSE)
+})
+sample.anchors <- FindIntegrationAnchors(object.list = sample.list, anchor.features = features, reduction = "rpca")
+FAP.CAFs.rPCA.integrated <- IntegrateData(anchorset = sample.anchors)
+```
+
+```{r}
+FAP.CAFs.rPCA.integrated <- ScaleData(FAP.CAFs.rPCA.integrated, verbose = FALSE)
+FAP.CAFs.rPCA.integrated <- RunPCA(FAP.CAFs.rPCA.integrated, npcs = 50, verbose = FALSE)
+# Determine percent of variation associated with each PC
+pct <- FAP.CAFs.rPCA.integrated@reductions$pca@stdev / sum(FAP.CAFs.rPCA.integrated@reductions$pca@stdev) * 100
+# Determine the difference between variation of PC and subsequent PC
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1),  decreasing = T)[1] + 1 # last point where change of % of variation is more than 0.1%.
+
+FAP.CAFs.rPCA.integrated <- RunUMAP(FAP.CAFs.rPCA.integrated, reduction = "pca", dims = 1:12)
+FAP.CAFs.rPCA.integrated <- FindNeighbors(FAP.CAFs.rPCA.integrated, reduction = "pca", dims = 1:12)
+FAP.CAFs.rPCA.integrated <- FindClusters(FAP.CAFs.rPCA.integrated, resolution = 0.1)
+```
+
+```{r}
+# saveRDS(FAP.CAFs.rPCA.integrated, "FAP.Mesenchymal.Souped.Singlets.rPCA.integrated.RDS")
+```
+
+
+# Integration and clustering of Olaniru 2023
+The data of Olaniru et al, 2023, available on GEO with accession GSE197064, is normalized and integrated.
+```{r}
+Olaniru.Mat.1 <- read.csv("Olaniru_et_al_2023/GSE197064_RAW/121313_final_matrix.csv", header = F)
+Olaniru.Mat.1 <- Olaniru.Mat.1 %>%
+  filter(V4 %in% "Gene Expression")
+
+Olaniru.Mat.1 <- sparseMatrix(
+  i=match(Olaniru.Mat.1$V3, unique(Olaniru.Mat.1$V3)),
+  j=match(Olaniru.Mat.1$V1, unique(Olaniru.Mat.1$V1)),
+  x=Olaniru.Mat.1$V5,
+  dims=c(length(unique(Olaniru.Mat.1$V3)), length(unique(Olaniru.Mat.1$V1))),
+  dimnames=list(unique(Olaniru.Mat.1$V3), unique(Olaniru.Mat.1$V1))
+)
+
+Olaniru.Mat.2 <- read.csv("Olaniru_et_al_2023/GSE197064_RAW/121419_final_matrix.csv", header = F)
+
+Olaniru.Mat.2 <- Olaniru.Mat.2 %>%
+  filter(V4 %in% "Gene Expression")
+
+Olaniru.Mat.2 <- sparseMatrix(
+  i=match(Olaniru.Mat.2$V3, unique(Olaniru.Mat.2$V3)),
+  j=match(Olaniru.Mat.2$V1, unique(Olaniru.Mat.2$V1)),
+  x=Olaniru.Mat.2$V5,
+  dims=c(length(unique(Olaniru.Mat.2$V3)), length(unique(Olaniru.Mat.2$V1))),
+  dimnames=list(unique(Olaniru.Mat.2$V3), unique(Olaniru.Mat.2$V1))
+)
+
+Olaniru.Mat.3 <- read.csv("Olaniru_et_al_2023/GSE197064_RAW/131419_final_matrix.csv", header = F)
+
+Olaniru.Mat.3 <- Olaniru.Mat.3 %>%
+  filter(V4 %in% "Gene Expression")
+
+Olaniru.Mat.3 <- sparseMatrix(
+  i=match(Olaniru.Mat.3$V3, unique(Olaniru.Mat.3$V3)),
+  j=match(Olaniru.Mat.3$V1, unique(Olaniru.Mat.3$V1)),
+  x=Olaniru.Mat.3$V5,
+  dims=c(length(unique(Olaniru.Mat.3$V3)), length(unique(Olaniru.Mat.3$V1))),
+  dimnames=list(unique(Olaniru.Mat.3$V3), unique(Olaniru.Mat.3$V1))
+)
+
+Olaniru.Mat.4 <- read.csv("Olaniru_et_al_2023/GSE197064_RAW/151820_final_matrix.csv", header = F)
+
+Olaniru.Mat.4 <- Olaniru.Mat.4 %>%
+  filter(V4 %in% "Gene Expression")
+
+Olaniru.Mat.4 <- sparseMatrix(
+  i=match(Olaniru.Mat.4$V3, unique(Olaniru.Mat.4$V3)),
+  j=match(Olaniru.Mat.4$V1, unique(Olaniru.Mat.4$V1)),
+  x=Olaniru.Mat.4$V5,
+  dims=c(length(unique(Olaniru.Mat.4$V3)), length(unique(Olaniru.Mat.4$V1))),
+  dimnames=list(unique(Olaniru.Mat.4$V3), unique(Olaniru.Mat.4$V1))
+)
+
+Olaniru.SO.1 <- CreateSeuratObject(Olaniru.Mat.1)
+Olaniru.SO.1@meta.data <- Olaniru.SO.1@meta.data %>%
+  mutate(Sample = "S1")
+
+Olaniru.SO.2 <- CreateSeuratObject(Olaniru.Mat.2)
+Olaniru.SO.2@meta.data <- Olaniru.SO.2@meta.data %>%
+  mutate(Sample = "S2")
+
+Olaniru.SO.3 <- CreateSeuratObject(Olaniru.Mat.3)
+Olaniru.SO.3@meta.data <- Olaniru.SO.3@meta.data %>%
+  mutate(Sample = "S3")
+
+Olaniru.SO.4 <- CreateSeuratObject(Olaniru.Mat.4)
+Olaniru.SO.4@meta.data <- Olaniru.SO.4@meta.data %>%
+  mutate(Sample = "S4")
+
+Olaniru.Developing.Panc.SO <- merge(Olaniru.SO.1, y = c(Olaniru.SO.2, Olaniru.SO.3, Olaniru.SO.4), add.cell.ids = c("S1", "S2", "S3", "S4"))
+```
+
+
+```{r}
+human.s.genes<-c("MCM5", "PCNA", "TYMS", "FEN1", "MCM2", "MCM4", "RRM1", "UNG", "GINS2", "MCM6", "CDCA7", "DTL", "PRIM1", "UHRF1", "MLF1IP", "HELLS", "RFC2", "RPA2", "NASP", "RAD51AP1", "GMNN", "WDR76", "SLBP", "CCNE2", "UBR7", "POLD3", "MSH2", "ATAD2", "RAD51", "RRM2", "CDC45", "CDC6", "EXO1", "TIPIN", "DSCC1", "BLM", "CASP8AP2", "USP1", "CLSPN", "POLA1", "CHAF1B", "BRIP1", "E2F8") 
+
+human.g2m.genes<-c("HMGB2", "CDK1", "NUSAP1", "UBE2C", "BIRC5", "TPX2", "TOP2A", "NDC80", "CKS2", "NUF2", "CKS1B", "MKI67", "TMPO", "CENPF", "TACC3", "FAM64A", "SMC4", "CCNB2", "CKAP2L", "CKAP2", "AURKB", "BUB1", "KIF11", "ANP32E", "TUBB4B", "GTSE1", "KIF20B", "HJURP", "CDCA3", "HN1", "CDC20", "TTK", "CDC25C", "KIF2C", "RANGAP1", "NCAPD2", "DLGAP5", "CDCA2", "CDCA8", "ECT2", "KIF23", "HMMR", "AURKA", "PSRC1", "ANLN", "LBR", "CKAP5", "CENPE", "CTCF", "NEK2", "G2E3", "GAS2L3", "CBX5", "CENPA")
+
+Patient.list <- SplitObject(Olaniru.Developing.Panc.SO, split.by = "Sample")
+Patient.list <- lapply(X = Patient.list, FUN = function(x) {
+    x[["percent.mt"]] <- PercentageFeatureSet(x, pattern = "^MT-")
+    x <- NormalizeData(x)
+    x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 3000)
+})
+features <- SelectIntegrationFeatures(object.list = Patient.list, nfeatures = 3000)
+Patient.list <- lapply(X = Patient.list, FUN = function(x) {
+    x <- CellCycleScoring(x, s.features = human.s.genes, g2m.features = human.g2m.genes, set.ident = TRUE)
+    x <- ScaleData(x, vars.to.regress = c("S.Score", "G2M.Score"), features = features, verbose = FALSE)
+    x <- RunPCA(x, features = features, verbose = FALSE)
+})
+Patient.anchors <- FindIntegrationAnchors(object.list = Patient.list, anchor.features = features, reduction = "rpca")
+Olaniru.Developing.Panc.SO.integrated <- IntegrateData(anchorset = Patient.anchors)
+```
+
+```{r}
+DefaultAssay(Olaniru.Developing.Panc.SO.integrated) <- "integrated"
+Olaniru.Developing.Panc.SO.integrated <- ScaleData(Olaniru.Developing.Panc.SO.integrated, verbose = FALSE)
+Olaniru.Developing.Panc.SO.integrated <- RunPCA(Olaniru.Developing.Panc.SO.integrated, npcs = 50, verbose = FALSE)
+ElbowPlot(Olaniru.Developing.Panc.SO.integrated, ndims = 50)
+# Determine percent of variation associated with each PC
+pct <- Olaniru.Developing.Panc.SO.integrated@reductions$pca@stdev / sum(Olaniru.Developing.Panc.SO.integrated@reductions$pca@stdev) * 100
+# Determine the difference between variation of PC and subsequent PC
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1),  decreasing = T)[1] + 1 # last point where change of % of variation is more than 0.1%.
+Olaniru.Developing.Panc.SO.integrated <- RunUMAP(Olaniru.Developing.Panc.SO.integrated, reduction = "pca", dims = 1:18)
+Olaniru.Developing.Panc.SO.integrated <- FindNeighbors(Olaniru.Developing.Panc.SO.integrated, reduction = "pca", dims = 1:18)
+Olaniru.Developing.Panc.SO.integrated <- FindClusters(Olaniru.Developing.Panc.SO.integrated, resolution = 0.8)
+```
+
+Low quality clusters 14 and 17 are removed
+```{r}
+Olaniru.Developing.Panc.SO.integrated <- subset(Olaniru.Developing.Panc.SO.integrated, idents = c("0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "15", "16", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29"))
+DefaultAssay(Olaniru.Developing.Panc.SO.integrated) <- "RNA"
+  Olaniru.Developing.Panc.SO.integrated <- FindVariableFeatures(Olaniru.Developing.Panc.SO.integrated, selection.method = "vst", nfeatures = 3000)
+  DefaultAssay(Olaniru.Developing.Panc.SO.integrated) <- "integrated"
+  Olaniru.Developing.Panc.SO.integrated <- ScaleData(Olaniru.Developing.Panc.SO.integrated, verbose = FALSE)
+  Olaniru.Developing.Panc.SO.integrated <- RunPCA(Olaniru.Developing.Panc.SO.integrated, npcs = 50, verbose = FALSE)
+  Olaniru.Developing.Panc.SO.integrated <- RunUMAP(Olaniru.Developing.Panc.SO.integrated, reduction = "pca", dims = 1:20)
+  Olaniru.Developing.Panc.SO.integrated <- FindNeighbors(Olaniru.Developing.Panc.SO.integrated, reduction = "pca", dims = 1:20)
+  Olaniru.Developing.Panc.SO.integrated <- FindClusters(Olaniru.Developing.Panc.SO.integrated, resolution = 0.1)
+```
+
+```{r}
+#saveRDS(Olaniru.Developing.Panc.SO.integrated, "Olaniru.Developing.Panc.SO.integrated.RDS")
+```
+
+```{r}
+Olaniru.Developing.Panc.SO.integrated <- readRDS("Olaniru.Developing.Panc.SO.integrated.RDS")
+```
+
+```{r}
+Olaniru.Developing.Panc.SO.integrated@meta.data <- Olaniru.Developing.Panc.SO.integrated@meta.data %>%
+  mutate(Annotation = case_when(
+    integrated_snn_res.0.1 == "0" ~ "Mesenchymal cells",
+    integrated_snn_res.0.1 == "1" ~ "Mesenchymal cells",
+    integrated_snn_res.0.1 == "2" ~ "Acinar cells",
+    integrated_snn_res.0.1 == "3" ~ "Endocrine cells",
+    integrated_snn_res.0.1 == "4" ~ "Immune cells",
+    integrated_snn_res.0.1 == "5" ~ "Immune cells",
+    integrated_snn_res.0.1 == "6" ~ "Endothelial cells",
+    integrated_snn_res.0.1 == "7" ~ "Immune cells",
+    integrated_snn_res.0.1 == "8" ~ "Erythroblasts",
+    integrated_snn_res.0.1 == "9" ~ "Ductal cells",
+    integrated_snn_res.0.1 == "10" ~ "Schwann cells"
+  ))
+```
+
+```{r}
+#write.table(Olaniru.Developing.Panc.SO.integrated@meta.data, "Olaniru.Developing.Panc.SO.integrated.Meta.Data.txt", sep = "\t")
+```
+
+# Subsetting of mesenchymal-like cells
+Clusters with marker expression typical of mesenchymal cells are extracted to meak a new seurat object
+```{r}
+Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- subset(Olaniru.Developing.Panc.SO.integrated, idents = c("0" , "1"))
+DefaultAssay(Olaniru.Developing.Panc.Mesenchymal.SO.integrated) <- "RNA"
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- FindVariableFeatures(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, selection.method = "vst", nfeatures = 3000)
+  DefaultAssay(Olaniru.Developing.Panc.Mesenchymal.SO.integrated) <- "integrated"
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- ScaleData(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, verbose = FALSE)
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- RunPCA(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, npcs = 50, verbose = FALSE)
+  ElbowPlot(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, ndims = 50)
+# Determine percent of variation associated with each PC
+pct <- Olaniru.Developing.Panc.Mesenchymal.SO.integrated@reductions$pca@stdev / sum(Olaniru.Developing.Panc.Mesenchymal.SO.integrated@reductions$pca@stdev) * 100
+# Determine the difference between variation of PC and subsequent PC
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1),  decreasing = T)[1] + 1 # last point where change of % of variation is more than 0.1%.
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- RunUMAP(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, reduction = "pca", dims = 1:11)
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- FindNeighbors(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, reduction = "pca", dims = 1:11)
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- FindClusters(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, resolution = 0.1)
+```
+
+Low quality clusters are removed
+```{r}
+Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- subset(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, idents = c("0", "1", "2", "3"))
+DefaultAssay(Olaniru.Developing.Panc.Mesenchymal.SO.integrated) <- "RNA"
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- FindVariableFeatures(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, selection.method = "vst", nfeatures = 3000)
+  DefaultAssay(Olaniru.Developing.Panc.Mesenchymal.SO.integrated) <- "integrated"
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- ScaleData(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, verbose = FALSE)
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- RunPCA(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, npcs = 50, verbose = FALSE)
+  ElbowPlot(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, ndims = 50)
+# Determine percent of variation associated with each PC
+pct <- Olaniru.Developing.Panc.Mesenchymal.SO.integrated@reductions$pca@stdev / sum(Olaniru.Developing.Panc.Mesenchymal.SO.integrated@reductions$pca@stdev) * 100
+# Determine the difference between variation of PC and subsequent PC
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1),  decreasing = T)[1] + 1 # last point where change of % of variation is more than 0.1%.
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- RunUMAP(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, reduction = "pca", dims = 1:11)
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- FindNeighbors(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, reduction = "pca", dims = 1:11)
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- FindClusters(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, resolution = 0.1)
+```
+
+Immune cell clusters are removed
+```{r}
+Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- subset(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, idents = c("0", "1", "2", "3"))
+DefaultAssay(Olaniru.Developing.Panc.Mesenchymal.SO.integrated) <- "RNA"
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- FindVariableFeatures(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, selection.method = "vst", nfeatures = 3000)
+  DefaultAssay(Olaniru.Developing.Panc.Mesenchymal.SO.integrated) <- "integrated"
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- ScaleData(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, verbose = FALSE)
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- RunPCA(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, npcs = 50, verbose = FALSE)
+  ElbowPlot(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, ndims = 50)
+# Determine percent of variation associated with each PC
+pct <- Olaniru.Developing.Panc.Mesenchymal.SO.integrated@reductions$pca@stdev / sum(Olaniru.Developing.Panc.Mesenchymal.SO.integrated@reductions$pca@stdev) * 100
+# Determine the difference between variation of PC and subsequent PC
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1),  decreasing = T)[1] + 1 # last point where change of % of variation is more than 0.1%.
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- RunUMAP(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, reduction = "pca", dims = 1:15)
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- FindNeighbors(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, reduction = "pca", dims = 1:15)
+  Olaniru.Developing.Panc.Mesenchymal.SO.integrated <- FindClusters(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, resolution = 0.1)
+  DimPlot(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, reduction = "umap", label = T, pt.size = 1)
+```
+
+```{r}
+#saveRDS(Olaniru.Developing.Panc.Mesenchymal.SO.integrated, "Olaniru.Developing.Panc.Mesenchymal.SO.integrated.RDS")
+```
+
+```{r}
+Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data <- Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data %>%
+  mutate(Annotation = case_when(
+    integrated_snn_res.0.1 == "0" ~ "A",
+    integrated_snn_res.0.1 == "1" ~ "B",
+    integrated_snn_res.0.1 == "2" ~ "C",
+    integrated_snn_res.0.1 == "3" ~ "D"
+  ))
+```
+
+```{r}
+#write.table(Olaniru.Developing.Panc.Mesenchymal.SO.integrated@meta.data, "Olaniru.Developing.Panc.Mesenchymal.SO.integrated.Meta.Data.txt", sep = "\t")
+```
+
+# TF activity inference for FAP CAFs and Olaniru et al
+```{r}
+library(Seurat)
+library(decoupleR)
+library(dplyr)
+library(tibble)
+library(tidyr)
+library(patchwork)
+library(ggplot2)
+```
+
+```{r}
+net <- get_collectri(organism = "human", split_complexes = FALSE)
+
+net.TF.target.Count <- net %>%
+  group_by(source) %>%
+  summarise(Count = n()) %>%
+  filter(Count >19)
+
+TFs <- unique(net$source)
+TFs.1 <- TFs[1:50]
+TFs.2 <- TFs[51:100]
+TFs.3 <- TFs[101:150]
+TFs.4 <- TFs[151:200]
+TFs.5 <- TFs[201:250]
+TFs.6 <- TFs[251:300]
+TFs.7 <- TFs[301:350]
+TFs.8 <- TFs[351:402]
+
+net.1 <- net %>%
+  filter(source %in% TFs.1)
+
+net.2 <- net %>%
+  filter(source %in% TFs.2)
+
+net.3 <- net %>%
+  filter(source %in% TFs.3)
+
+net.4 <- net %>%
+  filter(source %in% TFs.4)
+
+net.5 <- net %>%
+  filter(source %in% TFs.5)
+
+net.6 <- net %>%
+  filter(source %in% TFs.6)
+
+net.7 <- net %>%
+  filter(source %in% TFs.7)
+
+net.8 <- net %>%
+  filter(source %in% TFs.8)
+
+FAP.CAFs.rPCA.integrated <- readRDS("FAP.CAFs.Souped.Singlets.rPCA.integrated.RDS")
+mat<- as.matrix(FAP.CAFs.rPCA.integrated@assays$RNA@data)
+acts.1 <- run_ulm(mat=mat, net=net.1, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+acts.2 <- run_ulm(mat=mat, net=net.2, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+acts.3 <- run_ulm(mat=mat, net=net.3, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+acts.4 <- run_ulm(mat=mat, net=net.4, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+acts.5 <- run_ulm(mat=mat, net=net.5, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+acts.6 <- run_ulm(mat=mat, net=net.6, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+acts.7 <- run_ulm(mat=mat, net=net.7, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+acts.8 <- run_ulm(mat=mat, net=net.8, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+
+acts <- rbind(acts.1, acts.2, acts.3, acts.4, acts.5, acts.6, acts.7, acts.8)
+```
+
+```{r}
+FAP.CAFs.rPCA.integrated[['tfsulm']] <- acts_ulm_PSCs %>%
+  pivot_wider(id_cols = 'source', names_from = 'condition',
+              values_from = 'score') %>%
+  column_to_rownames('source') %>%
+  Seurat::CreateAssayObject(.)
+
+
+# Change assay
+DefaultAssay(object = FAP.CAFs.rPCA.integrated) <- "tfsulm"
+
+# Scale the data
+FAP.CAFs.rPCA.integrated <- ScaleData(FAP.CAFs.rPCA.integrated)
+
+#saveRDS(FAP.CAFs.rPCA.integrated, "TF.Activity.FAP.CAFs.rPCA.integrated.RDS")
+```
+
+```{r}
+net <- get_collectri(organism = "human", split_complexes = FALSE)
+
+net.TF.target.Count <- net %>%
+  group_by(source) %>%
+  summarise(Count = n()) %>%
+  filter(Count >19)
+
+TFs <- unique(net$source)
+TFs.1 <- TFs[1:50]
+TFs.2 <- TFs[51:100]
+TFs.3 <- TFs[101:150]
+TFs.4 <- TFs[151:200]
+TFs.5 <- TFs[201:250]
+TFs.6 <- TFs[251:300]
+TFs.7 <- TFs[301:350]
+TFs.8 <- TFs[351:402]
+
+net.1 <- net %>%
+  filter(source %in% TFs.1)
+
+net.2 <- net %>%
+  filter(source %in% TFs.2)
+
+net.3 <- net %>%
+  filter(source %in% TFs.3)
+
+net.4 <- net %>%
+  filter(source %in% TFs.4)
+
+net.5 <- net %>%
+  filter(source %in% TFs.5)
+
+net.6 <- net %>%
+  filter(source %in% TFs.6)
+
+net.7 <- net %>%
+  filter(source %in% TFs.7)
+
+net.8 <- net %>%
+  filter(source %in% TFs.8)
+
+Olaniru.Norm.Panc <- readRDS("Olaniru.Developing.Panc.Mesenchymal.SO.integrated.RDS")
+mat<- as.matrix(Olaniru.Norm.Panc@assays$RNA@data)
+acts.1 <- run_ulm(mat=mat, net=net.1, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+acts.2 <- run_ulm(mat=mat, net=net.2, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+acts.3 <- run_ulm(mat=mat, net=net.3, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+acts.4 <- run_ulm(mat=mat, net=net.4, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+acts.5 <- run_ulm(mat=mat, net=net.5, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+acts.6 <- run_ulm(mat=mat, net=net.6, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+acts.7 <- run_ulm(mat=mat, net=net.7, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+acts.8 <- run_ulm(mat=mat, net=net.8, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+
+acts <- rbind(acts.1, acts.2, acts.3, acts.4, acts.5, acts.6, acts.7, acts.8)
+```
+
+```{r}
+Olaniru.Norm.Panc[['tfsulm']] <- acts_ulm_PSCs %>%
+  pivot_wider(id_cols = 'source', names_from = 'condition',
+              values_from = 'score') %>%
+  column_to_rownames('source') %>%
+  Seurat::CreateAssayObject(.)
+
+
+# Change assay
+DefaultAssay(object = Olaniru.Norm.Panc) <- "tfsulm"
+
+# Scale the data
+Olaniru.Norm.Panc <- ScaleData(Olaniru.Norm.Panc)
+
+#saveRDS(Olaniru.Norm.Panc, "TF.Activity.Olaniru.Developing.Panc.Mesenchymal.SO.integrated.RDS")
+```
+
+# Integration and clustering of Peng 2019.
+The publically available data of Peng et al, 2019, PMID 31273297, is normalized and integrated
+```{r}
+library(dplyr)
+library(stringr)
+library(Seurat)
+library(tidyverse)
+library(cowplot)
+```
+
+rPCA integration of mesenchymal cells
+```{r}
+meta_data <- read.table("all_celltype.txt")
+colnames(meta_data) <- as.character(unlist(meta_data[1,]))
+meta_data = meta_data[-1, ]
+Fib_IDs <- meta_data %>% filter(cluster == c("Stellate_cell"))
+Fib_IDs_2 <- meta_data %>% filter(cluster == c("Fibroblast_cell"))
+Fib_IDs <- rbind(Fib_IDs, Fib_IDs_2)
+uc <- read.table("count-matrix.txt")
+T.uc <- uc[1:24005, 1:41986]
+keep.T.Fibs <- colnames(T.uc) %in% Fib_IDs$cell.name
+Fib.T.uc <- T.uc[, keep.T.Fibs]
+Fib.T.uc <- CreateSeuratObject(Fib.T.uc)
+
+human.s.genes<-c("MCM5", "PCNA", "TYMS", "FEN1", "MCM2", "MCM4", "RRM1", "UNG", "GINS2", "MCM6", "CDCA7", "DTL", "PRIM1", "UHRF1", "MLF1IP", "HELLS", "RFC2", "RPA2", "NASP", "RAD51AP1", "GMNN", "WDR76", "SLBP", "CCNE2", "UBR7", "POLD3", "MSH2", "ATAD2", "RAD51", "RRM2", "CDC45", "CDC6", "EXO1", "TIPIN", "DSCC1", "BLM", "CASP8AP2", "USP1", "CLSPN", "POLA1", "CHAF1B", "BRIP1", "E2F8") 
+
+human.g2m.genes<-c("HMGB2", "CDK1", "NUSAP1", "UBE2C", "BIRC5", "TPX2", "TOP2A", "NDC80", "CKS2", "NUF2", "CKS1B", "MKI67", "TMPO", "CENPF", "TACC3", "FAM64A", "SMC4", "CCNB2", "CKAP2L", "CKAP2", "AURKB", "BUB1", "KIF11", "ANP32E", "TUBB4B", "GTSE1", "KIF20B", "HJURP", "CDCA3", "HN1", "CDC20", "TTK", "CDC25C", "KIF2C", "RANGAP1", "NCAPD2", "DLGAP5", "CDCA2", "CDCA8", "ECT2", "KIF23", "HMMR", "AURKA", "PSRC1", "ANLN", "LBR", "CKAP5", "CENPE", "CTCF", "NEK2", "G2E3", "GAS2L3", "CBX5", "CENPA")
+
+
+Patient.list <- SplitObject(Fib.T.uc, split.by = "orig.ident")
+Patient.list[[20]] <- NULL
+Patient.list[[21]] <- NULL
+Patient.list[[20]] <- NULL
+Patient.list[[8]] <- NULL
+Patient.list <- lapply(X = Patient.list, FUN = function(x) {
+    x <- NormalizeData(x)
+    x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 2000)
+})
+features <- SelectIntegrationFeatures(object.list = Patient.list)
+Patient.list <- lapply(X = Patient.list, FUN = function(x) {
+    x <- CellCycleScoring(x, s.features = human.s.genes, g2m.features = human.g2m.genes, set.ident = TRUE)
+    x <- ScaleData(x, vars.to.regress = c("S.Score", "G2M.Score"), features = features, verbose = FALSE)
+    x <- RunPCA(x, features = features, verbose = FALSE)
+})
+Patient.anchors <- FindIntegrationAnchors(object.list = Patient.list, anchor.features = features, reduction = "rpca")
+Mesenchymal.Cells.rPCA.integrated <- IntegrateData(anchorset = Patient.anchors)
+```
+
+Cluster integrated Mesenchymal cells are subsetted
+```{r}
+DefaultAssay(Mesenchymal.Cells.rPCA.integrated) <- "integrated"
+Mesenchymal.Cells.rPCA.integrated <- ScaleData(Mesenchymal.Cells.rPCA.integrated, verbose = FALSE)
+Mesenchymal.Cells.rPCA.integrated <- RunPCA(Mesenchymal.Cells.rPCA.integrated, npcs = 30, verbose = FALSE)
+Mesenchymal.Cells.rPCA.integrated <- RunUMAP(Mesenchymal.Cells.rPCA.integrated, reduction = "pca", dims = 1:30)
+Mesenchymal.Cells.rPCA.integrated <- FindNeighbors(Mesenchymal.Cells.rPCA.integrated, reduction = "pca", dims = 1:30)
+Mesenchymal.Cells.rPCA.integrated <- FindClusters(Mesenchymal.Cells.rPCA.integrated, resolution = 0.1)
+```
+
+```{r}
+Mesenchymal.Cells.rPCA.integrated.meta.data <- Mesenchymal.Cells.rPCA.integrated@meta.data
+Author.annotation <- read.table("all_celltype.txt", header = T)
+Author.annotation <- Author.annotation %>%
+  rename("Author_Annotation" = "cluster")
+Mesenchymal.Cells.rPCA.integrated.meta.data <- Mesenchymal.Cells.rPCA.integrated.meta.data %>%
+  rownames_to_column("cell.name") %>%
+  left_join(Author.annotation, by = "cell.name") %>%
+  column_to_rownames("cell.name")
+Mesenchymal.Cells.rPCA.integrated@meta.data <- Mesenchymal.Cells.rPCA.integrated.meta.data
+```
+
+markers of true mesenchymal cells and contaminants are plotted
+```{r}
+VlnPlot(Mesenchymal.Cells.rPCA.integrated, features =  c("FAP", "LUM", "RGS5", "TOP2A", "KRT19", "AIF1", "CD3E"), assay = "RNA", pt.size = 0, stack = T, flip = T, fill.by = "ident") + NoLegend() + FontSize(x.text = 8)
+```
+
+
+```{r}
+Mesenchymal.Cells.rPCA.integrated <- RenameIdents(object = Mesenchymal.Cells.rPCA.integrated, c("0" = "CAFs 1", "1" = "CAPs 1", "2" = "CAPs 2", "3" = "CAFs 2", "4" = "Macrophages", "5" = "T-Cells", "6" = "EMT cells", "7" = "Proliferating Cells", "8" = "Unknown"))
+Mesenchymal.Cells.rPCA.integrated@active.ident <- factor(x = Mesenchymal.Cells.rPCA.integrated@active.ident, levels = c("CAFs 1", "CAFs 2", "CAPs 1", "CAPs 2", "Proliferating Cells", "EMT cells", "Macrophages", "T-Cells", "Unknown"))
+```
+
+Pure mesenchymal cells are subsetted and re-clustered
+```{r}
+Mesenchymal.Cells <- subset(Mesenchymal.Cells.rPCA.integrated, idents = c("CAFs 1", "CAFs 2", "CAPs 1", "CAPs 2"))
+DefaultAssay(Mesenchymal.Cells) <- "RNA"
+  Mesenchymal.Cells <- FindVariableFeatures(Mesenchymal.Cells, selection.method = "vst", nfeatures = 3000)
+  DefaultAssay(Mesenchymal.Cells) <- "integrated"
+  Mesenchymal.Cells <- ScaleData(Mesenchymal.Cells, verbose = FALSE)
+  Mesenchymal.Cells <- RunPCA(Mesenchymal.Cells, npcs = 50, verbose = FALSE)
+  Mesenchymal.Cells <- RunUMAP(Mesenchymal.Cells, reduction = "pca", dims = 1:30)
+  Mesenchymal.Cells <- FindNeighbors(Mesenchymal.Cells, reduction = "pca", dims = 1:30)
+  Mesenchymal.Cells <- FindClusters(Mesenchymal.Cells, resolution = 0.1)
+
+#saveRDS(Mesenchymal.Cells.rPCA.integrated, "Peng.Mesenchymal.Cells.rPCA.integrated.RDS")
+```
