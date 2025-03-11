@@ -1,0 +1,12 @@
+Parameter,Value
+mappable_genome,~/Mouse_Genome_GRCm39.109/Musmu_STAR_mappable_genome_CP_27Mar2024/
+rRNA_fasta,Musmu_rRNA.fas
+annotation_gtf,~/Mouse_Genome_GRCm39.109/Musmu_GRCm39.109_protcod_fd.gtf
+annotation_bed,~/Mouse_Genome_GRCm39.109/Musmu_GRCm39.109_protcod_fd.bed
+intronic_bed,~/Mouse_Genome_GRCm39.109/Musmu_GRCm39.109_protcod_fd_ExonIntron.bed
+cDNA_position_key,~/Mouse_Genome_GRCm39.109/Musmu_GRCm39.109_protcod_fd_posinfo_table.txt
+genic_cap,8e+06
+tp_bias_max_length,100
+tp_bias_sample_size,1000
+symplicity_q_cutoff,1e-04
+symplicity_FC_cutoff,1.5

@@ -1,0 +1,393 @@
+---
+title: "Fig_6_ifCAF_CM_Neutrophil_Experiments"
+author: "Joshua"
+date: "2024-06-22"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Summary
+The code below was used to generate Figures 6 E-H and S10 C-D of Cumming et al, 2025. This relates to the mouse bulk RNA-seq data from 18 samples of neutrophils treated with conditioned media, where trhe cells used to generate conditioned media were treated with DMSO, MSA-2 or DMXAA. The count data file `Nphi_CM_18s_HT_counts_17jun2024.txt` and the metadata file `Neutrophil_CM_18s_sample_metadata.txt` are available on ArrayExpress with accession number E-MTAB-14934. 
+
+# Dependencies
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggrepel)
+library(cowplot)
+options(dplyr.summarise.inform=FALSE) # Silences an annoying warning by the summarise function
+```
+Note: DESeq2 calls an array of other packages, some of which interfere with the packages of the tidyverse suite. The DEseq2 library is loaded further below
+
+# Data and metadata
+Raw read count from htSeq is loaded
+```{r}
+RRC_long <- read.table("Nphi_CM_18s_HT_counts_17jun2024.txt", header = T)
+```
+
+The gene metadata table contains information about each protein coding gene. The code to generate it is described in `Musmu_GRCm39_Ens109_26Feb2024.Rmd`   
+```{r}
+Gene_md<-read.table("Musmu_GRCm39.109_protcod_fd_Gene_md.txt", header = F) %>% 
+  set_names(nm = c("EnsID", "Gene_Name", "tot_exon_length", "Exon_number", "Chr", "Start", "End", "Strand", "Version", "Source"))
+```
+
+The Sample metadata was made manually. It contains information about batches, replicates and biological variables. Here, the essential metadata is loaded into a table directly. The samples from DMXAA treatment and DMSO control are selected
+```{r}
+Sample_md<-tibble(Sample=paste("n", 1:18, sep = ""), Treatment=rep(c("DMXAA", "MSA2", "DMSO"), 6), Pairing_batch=rep(paste("B", 1:6, sep=""), each=3))
+
+Sample_md <- Sample_md %>% 
+  filter(Treatment %in% c("DMSO", "DMXAA"))
+```
+
+```{r}
+RRC_long <- RRC_long %>%
+  filter(Sample %in% unique(Sample_md$Sample))
+```
+
+A raw read count table is compiled with same gene order and sample order as the metadata. The Sample name is converted to a factor to remain in the same order instead of being sorted by alphabetical order. 
+```{r}
+RRC <- RRC_long %>% 
+  mutate(Sample=factor(Sample, levels = unique(RRC_long$Sample))) %>% 
+  spread(key = Sample, value = RRC) 
+
+RRC <- Gene_md %>% 
+  select(Gene=Gene_Name) %>% 
+  left_join(RRC, by="Gene") %>% 
+  select(-EnsID)
+
+RRC_mx <- RRC %>% 
+  column_to_rownames("Gene") 
+```
+
+# DESeq2 differential expression analysis
+```{r}
+library(DESeq2) 
+
+dds <- DESeqDataSetFromMatrix(countData = RRC_mx,
+                              colData = Sample_md,
+                              design= ~ Pairing_batch + Treatment)
+
+dds <- DESeq(dds)
+```
+
+The DEseq-normalized read count (DNRC) is extracted 
+```{r}
+DNRC <- counts(dds, normalized=TRUE) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Gene")
+
+DNRC_long <- DNRC %>% 
+  gather(key = Sample, value = DNRC, -Gene)
+```
+
+# extraction of q-values
+DEseq provides p-values for comparisons between groups of sample as per the applied design. 
+It also makes a correction for multiple testing, since there are very many genes. The p-values are adjusted using the False Discovery Rate (FDR) correction. The adjusted p values are called q-values. 
+
+A function is made to extract q values between groups
+```{r}
+Qs <- function(dds, grouping_var, treat_group, ctrl_group) {
+  comp_df <- results(dds, c(grouping_var, treat_group, ctrl_group)) %>%
+    as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    mutate(FC=2^log2FoldChange) %>% 
+    select(Gene, FC, padj) %>%
+    mutate(ctrl_group = ctrl_group, treat_group = treat_group)
+  
+  return(comp_df)
+}
+```
+
+The q values for Drug-treated vs control comparisons are calculated  
+DMSO is the control, so placed second in the results function arguments. 
+```{r}
+FC_qvals <- Qs(dds, "Treatment", "DMXAA", "DMSO")
+```
+
+# Selection of DE genes
+A cutoff on the absolute expression levels is desirable to remove significant genes that have so low expression values that they are in the range of background noise. 
+
+The mean DNRC per group is introduced
+```{r}
+group_DNRC <-DNRC_long %>% 
+  left_join(Sample_md, by = "Sample") %>% 
+  group_by(Gene, Treatment) %>% 
+  summarise(mean_DNRC=round(mean(DNRC), 3)) 
+
+Means_FC_qvals <- FC_qvals %>% 
+  left_join(group_DNRC, by=c("Gene","ctrl_group" = "Treatment")) %>% 
+  dplyr::rename(ctrl_mean_DNRC=mean_DNRC) %>% 
+  left_join(group_DNRC, by=c("Gene","treat_group" = "Treatment")) %>% 
+  dplyr::rename(treat_mean_DNRC=mean_DNRC) %>% 
+  mutate(FC=round(FC, 2)) %>% 
+  drop_na()
+```
+
+# Drug-modulated genes per condition
+The DE genes are extracted with lenient cutoff for plotting purposes
+```{r}
+LenSel_Means_FC_qvals <- Means_FC_qvals %>% 
+  filter(map2(ctrl_mean_DNRC, treat_mean_DNRC, max)>3) %>% 
+  mutate(FC = FC+0.01) %>%
+  mutate(logFC=log(FC)) %>% 
+  filter(abs(logFC)>0.1) %>% 
+  filter(padj<0.8) %>% 
+  arrange(desc(FC))
+```
+
+A function to make aesthetic volcano plots which highlights the top 10 genes
+```{r}
+volcaplot_highlight_top_10_genes<-function(in_condition, in_control){
+  gr_comp_qvals <- Means_FC_qvals %>% 
+    filter(treat_group==in_condition) %>% 
+    filter(ctrl_group==in_control) %>% 
+    #filter(ctrl_mean_DNRC >20 | treat_mean_DNRC >20)  %>%
+    mutate(sig=ifelse(padj<0.05 & abs(log(FC))>0.405, "S", "NS")) %>%
+    mutate(gene_type = case_when(log(FC) >= 0.405 & padj <= 0.05 ~ "up",
+                               log(FC) <= (-0.405) & padj <= 0.05 ~ "down",
+                               TRUE ~ "ns"))   
+  
+  cols <- c("up" = "#ffad73", "down" = "#26b3ff", "ns" = "grey") 
+sizes <- c("up" = 2, "down" = 2, "ns" = 1) 
+alphas <- c("up" = 1, "down" = 1, "ns" = 0.5)
+  
+  top_10_sig_genes<-gr_comp_qvals %>% 
+    filter(sig %in% "S") %>%
+    top_n(-10, padj)
+    
+
+p <- ggplot(data = gr_comp_qvals,
+       aes(x = log(FC),
+           y = -log10(padj))) + 
+  geom_point(aes(colour = gene_type), 
+             alpha = 0.5, 
+             shape = 16,
+             size = 1) + 
+  geom_point(data = top_10_sig_genes,
+             shape = 21,
+             size = 2, 
+             fill = ifelse(top_10_sig_genes$FC >1.5,"#ffad73", "#26b3ff"), 
+             colour = "black") + 
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dashed") + 
+  geom_vline(xintercept = c(log(0.666666), log(1.5)),
+             linetype = "dashed") +
+  geom_label_repel(data = top_10_sig_genes,   
+                   aes(label = Gene),
+                   force = 2,
+                   nudge_y = 1) +
+  scale_colour_manual(values = cols) + 
+  scale_x_continuous(breaks = c(seq(-3, 3, 1)),     
+                     limits = c(-3, 3)) +
+  labs(x = "log(fold change)",
+       y = "-log10(adjusted P-value)",
+       colour = "Expression \nchange") +
+  theme_bw() + # Select theme with a white background  
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),    
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) 
+
+  return(p)
+}
+
+```
+
+Genes that are differentially expressed in neutrophils when exposed to conditioned medium from DMXAA vs PSC treatments. 
+# Figure S10C
+```{r}
+Fig_S10C_plot <- volcaplot_highlight_top_10_genes("DMXAA", "DMSO")
+
+if (!dir.exists("Figure_S10")) {dir.create("Figure_S10")}
+ggsave(plot = Fig_S10C_plot, "Figure_S10C_Neutrophil_DEGs_DMXAA_treated_PSC_CM.pdf", width = 5, height = 5, units = "in", path = "Figure_S10/")
+```
+
+The TAN subtypes' markers from the in vivo experiment are loaded. The generation of these markers lists is described in the R markdown `Figure_5_S9_data_analysis.rmd`. The markers lists are available in the article's supplementary table S10
+```{r}
+get_sig("Arch/CAF.Neutrophil.Targets.MSA2.Up.txt")
+
+# from TAN.1.Markers.In.Vivo.txt
+TAN.1.Markers.in.vivo <- c("Ptgs1", "Cst3", "Rps21", "Med12l", "Gpr171", "Rps8", "Rpl22", "Exoc4", "Snrpg", "Siglecf", "Fto", "Zfhx3", "Rplp1", "Dennd4a", "Rpsa", "Ltc4s", "Gngt2", "Rps29", "Macroh2a1", "Hexb", "Ppia", "Ybx1", "Rps19", "Mrpl52", "Prkcb", "Rpl38", "Rplp0", "Uqcr11", "Atp5e", "Rps26", "Rplp2", "Il1r2", "Rpl41", "Cox7a2", "Gmds", "Rpl32", "Cox6c", "Rpl36", "Dip2c", "Rgs10", "Rpl11", "Hivep2", "Rpl35a", "Ptma", "Cers6", "Rps15", "Ms4a6d", "Ndufb1", "Rps27l", "Cox6a1", "Atp5g1", "Usp24", "Rps12", "Rps28", "Rps11", "Tex14", "Rpl18", "Rps18", "Tmem123", "Rbx1", "Mmp9", "Sh3bp1", "Snrpe", "Atp5k", "Krtcap2", "Mvb12b", "Rps17", "Bcl2a1d", "Cox7b", "Ranbp1", "Zfp710", "Gdi2", "Wnk1", "Rps15a", "Hint1", "Cytip", "Cox5a", "Npm1", "Mrpl42", "Snrpf", "Scimp", "Micos10", "Med14", "Cnbp", "Clasp2", "Dennd1a", "Mrps14", "Rpl19", "Rpl13", "Rpl15", "Cox8a", "Itgax", "Atp5mpl", "Banf1", "Cyrib", "Tmco1", "Ssbp3", "Mdh2", "Arl15", "Rps2", "Ndufa11", "Nr4a2", "Nucks1", "Rpl14", "B4galnt1", "Rps23", "Cops9", "Ndufb8", "Adgre1", "mt-Nd2", "Rps25", "Agap1", "Ndufc1", "Eprs", "Atp5a1", "Fbxl17", "Rpl8", "Hnrnpa3", "mt-Nd3", "Ubash3b", "Picalm", "Rpl6", "Atp5h", "Hnrnpd", "Ndufb7", "Nop10", "Wdr83os", "Rpl36al", "Eif4g3", "Dad1", "Ndufb5", "Rheb", "Romo1", "Rps24", "Coro2a", "Lamtor2", "Dapk1", "Rpl26", "Ccng1", "Cask", "Tomm7", "Cnot6l", "Rpl37a", "Arpc1b", "Uqcrb", "Ube3c", "Cox6b1", "Rps3a1", "Smyd3", "Rps20", "Timm10b", "Atp5l", "Dpm3", "Zdhhc14", "Ran", "mt-Nd1", "Sumo2", "P2ry14", "Serbp1", "St7", "Ndufb3", "Nme1", "Nol7", "Pbxip1", "Rpl21", "Csk", "Chchd2", "Ddt", "Ankrd44", "Gpd2", "mt-Cytb", "Ndufs5", "Psmb3", "Rpl39", "Atp5g2", "Atp5c1", "Set", "Snrpb", "Rpl27a", "Dbi", "Atp5j2", "Plcg2", "Smarca2", "Mtss1", "Mat2a", "Rack1", "Atp5o", "Ncf1", "Smc3", "Rpl12", "Bola2", "Grcc10", "Cox16", "Hmgb1", "Atp13a3", "Mbnl1", "Itch", "Mrpl57", "Lsm5", "Rbm3", "Asah1", "Stag1", "Naaa", "Atp5j", "Sbf2", "Ndufs6", "Isy1", "Cox5b", "Tmem14c", "Nedd8", "Rps14", "Wdr70", "Nf1", "Rpl28", "Dock8", "Atrx", "Gsr", "Cox4i1", "Rps4x", "Rpl35", "Park7", "Pptc7", "Rpl36a", "Uqcc2", "Rpl5", "Lsm4", "Atp5g3", "Timm13", "mt-Atp6", "Mrps24", "Gpx1", "Elob", "Entpd3", "Ubl3", "Atrnl1", "Cep83", "Ndufa13", "Sarnp", "Fubp1", "Pik3cd", "Slco3a1", "Rpn2", "Nsf", "U2af1", "Trmt112", "Snrpd3", "Asxl2", "Ube2e1", "Uqcr10", "Ndufa8", "Ankrd11", "Enah", "Zeb1", "Hsp90ab1", "Arpp19", "Srp9", "Rpl10a", "Ptpn18", "Cyld", "Cox7c", "Htt", "Ndufa2", "Btf3", "Iqgap2", "Foxn3", "Rpl13a", "Kmt2c", "Camkk1", "Fgr", "Mpp7", "Pan3", "Swi5", "Rpl23a", "Hnrnpa2b1", "Cpeb2", "Hipk1", "Rbm26", "Calm3", "Thrap3", "Phip", "Rps27a", "Ppp2r5e", "Ndufb4", "Abracl", "Inpp5d", "Dek", "Hspa8", "Taf10", "Antxr2", "Tma7", "Srp14", "Strn3", "Snd1", "Atpif1", "Sh3bgrl3", "Faf1", "Ptpn6", "Taok3", "Cmtm7", "Runx1", "Usp15", "Atp5md", "Polr2l", "Rpl27", "Epb41", "Smc1a", "Rpl7a", "Bbln", "Celf1", "Tbca", "Hat1", "Tut4", "Ywhaq", "Alyref", "Dennd5a", "Cd80", "Gsn", "Kat2b", "Ndufa3", "Ppp1ca", "Rps6", "Dhx15", "AA467197", "mt-Nd4", "Nuak2", "Tomm6", "Hnrnpl", "Mdm4", "Rps5", "Sh3kbp1", "Reep5", "Cdk11b", "Ndufb11", "Rps7", "Atp5pb", "Cpsf6", "Mbp", "Slc66a2", "Rere", "Stx12", "Dynlrb1", "Psma3", "Pomp", "Wdfy4", "Etv6", "Pcbp2", "Ndst1", "Ppp2r5c", "Man2b1", "Rpl4", "Ccny", "Vps13b", "Kif5b", "Akap9", "Ppp2cb", "Ppp3ca", "Mt1", "Psmd14", "Rpl7", "Hypk", "Ppp4r3a", "Tacc1", "Jpt1", "Eif3h", "Fli1", "Gcnt2", "Ndufa6", "Maml3", "Dlg1", "Smdt1", "Thada", "D8Ertd738e", "Tmem59", "Mycbp2", "Luc7l2", "Mrps21", "Prrc2c", "Btbd1", "Elavl1", "Dnajc1", "Fryl", "Ube3a", "Usp37", "Luc7l3", "Sfpq", "Hnrnpul1", "Nup98", "Ubr3", "Cbfb", "Celf2", "H2az1", "Gbf1", "Cog5", "Sptlc2", "Arhgef2", "Peli2", "Aprt", "Oxr1", "Lin54", "Man1b1", "Abca13", "Tnfaip8", "Ppig", "H1f2", "Atp6v0a1", "Pbx1", "Ubn2", "Alox5", "Hacd2", "Arhgap18", "Gatad2b", "Mfsd6", "Rtn3", "Gsk3b", "Vti1a", "Smg6", "Spata13", "Map2k4", "Ncoa2", "Stard7", "C130050O18Rik", "Mark3", "Lrch1", "Rb1", "Nab1", "Uba52", "Rin3", "Stx8", "Zfp638", "Arnt", "Ss18", "Mkln1", "Tnrc6c", "Pip5k1b", "Plcl2", "Rnf169", "Neurl3", "Rab43", "Cd300a", "Crtc3", "Ncoa1", "Agtpbp1", "Sik2", "Tcf20", "Uck2", "Atg16l1", "Tet3", "Fam172a", "Osbpl9", "Uty", "Ogfrl1", "Slk", "Sec24b", "Cdk2ap2", "Stat4", "Gfod1", "Nlrp12", "Aff1", "Prkch", "Nabp1", "Dapp1", "Csf2rb", "Crem", "Cwc25")
+
+# from TAN.2.Markers.In.Vivo.txt
+TAN.2.Markers.in.vivo <- c("Srgn", "Acod1", "Slfn4", "S100a9", "Wfdc17", "Fpr1", "Smox", "Retnlg", "Ccl6", "Isg15", "Cxcl3", "G0s2", "S100a8", "Nedd9", "Ifi204", "Grina", "Ifi209", "Il36g", "Cd14", "Ifit1", "Oasl1", "Actg1", "Rsad2", "Isg20", "S100a6", "Mcemp1", "Slc15a3", "Ifi211", "Trex1", "Prdx5", "Slfn2", "Cd300lf", "Ifit3b", "Ifit3", "Sgms2", "Ifit2", "Herc6", "Lilrb4a", "Slfn1", "Ifitm3", "Stfa2l1", "Lilrb4b", "Sp100", "Cd9", "Ehd1", "S100a11", "Usp18", "Rtp4", "Slpi", "Trim30a", "Zbp1", "Fcgr3", "Glrx", "Clec4d", "Upp1", "Stx11", "Ifi47", "Trem1", "Trim30b", "Tgm2", "Adam8", "Ccr1", "Cxcl2", "Sp140", "Ifitm1", "Trim30c", "Slc7a11", "Mxd1", "Irf7", "Osm", "Samd9l", "Oasl2", "C5ar1", "Xaf1", "Dgat2", "Fpr2", "Helz2", "Lyst", "Slfn5", "Plaur", "Itgam", "Ptafr", "Zfp36l1", "Slc16a3", "Ddx60", "Nampt", "Tnfrsf26", "Cstdc4", "Hsd11b1", "Trafd1", "Adam19", "Parp14", "Gbp2", "Ifi207", "Ifi206", "Ifi27l2a", "Fcgr4", "F3", "Rhoh", "Oas3", "Fam169b", "Parp10", "Sh2d3c", "Ppp1r3b", "Thbs1", "Trim30d", "Slfn8", "Lgals9", "Pfkp", "Eif2ak2", "Cflar", "Plac8", "Rigi", "Dach1", "Rgcc", "Ly6c2", "Stat2", "Rnf213", "Clec2d", "Mgst1", "Ifih1", "Dmxl2", "Olr1", "Atxn1", "Ccl4", "Sppl2a", "Asprv1", "Slc24a3", "Epsti1")
+
+# from TAN.3.Markers.In.Vivo.txt
+TAN.3.Markers.in.vivo <- c("Mreg", "Dock10", "Il1rn", "Zeb2", "Nceh1", "Fnip2", "Frrs1", "Slc31a2", "Hilpda", "Garin1a", "Ftl1", "F10", "1700017B05Rik", "Mif", "Cstb", "Osbpl8", "Ccl3", "Ifrd1", "Lrmda", "Zmiz1", "Ctsb", "Fndc3a", "Atp6v1c1", "Atp6v1a", "Naa50", "Atp6v0c", "Inhba", "Lamp1", "Ccl4", "Echdc3", "Pdcd1lg2", "Fnip1", "Hmox1", "Atf3", "Lhfpl2", "Ralgds", "Plekhm2", "Rps6ka2", "Tns3", "Hcar2", "Ero1a", "Arid5b", "Eea1", "Eif5", "Bri3", "P4ha1", "Lrrfip2", "Lgals3", "Ankrd12", "Bnip3", "Ctsz", "Lsmem1", "Ccdc126", "Sqstm1", "Hsp90aa1", "B4galt1", "Gna13", "Rnh1", "Sgpl1", "Plin2", "Cd63", "Npc1", "Tpi1", "Atp6v0e", "Bsg", "St13", "Xylt1", "Cd53", "Hspa9", "Polr2a", "Tnfrsf23", "Cnot4", "Jun", "Psap", "Tgif1", "Peds1", "Capg", "Pnpla7", "Mpp1", "Amdhd2", "Gla", "Arfgef2", "Gns", "Atf7ip", "Bnip3l", "Creb5", "Cited2", "Card19", "Npc2", "Csf1", "Smad3", "Mapk6", "Mbnl2", "Ubap1", "Rab9", "Vegfa", "Fth1", "Sntb2", "Tomm20", "M6pr", "Nsmce2", "Fmnl2", "Cd274", "Pgam1", "Snx29", "Elf2", "Slc43a2", "Hspa5", "Odc1", "Dtnbp1", "Plgrkt", "Rps28", "Slc31a1", "Rybp", "B4galt5", "Alcam", "Syne1", "Klf6", "Sema4d", "Rhob", "Ddit3", "Canx", "Sh2b2", "Mdm2", "Tbc1d5", "Dtx4", "Fkbp15", "Ilf3", "Ldha", "Dgkz", "U2surp", "Mfsd1", "Hk3", "Zfp292", "Bax", "Dnajb9", "Slc38a1", "Arl8b", "1810058I24Rik", "Fam162a", "Ctnnb1", "Plbd1", "Atp2b1", "Noct", "Cxcl2", "Ndfip2", "Fam50a", "Tpp1", "Map4k4", "Atp6v1b2", "Atp6v1e1", "Soat1", "Id2", "Elmo1", "Ncl", "Klhl24", "Pcgf5", "Brd2", "Eif3a", "Aim2", "Sod2", "Eif4e", "C9orf72", "Trpm7", "Cd68", "Rbm25", "Ppp4r2", "Slc20a1", "Il1a", "Lrif1", "Nbr1", "Tnf", "Stxbp5", "Slc25a37", "Alkbh5", "Ewsr1", "Chka", "Fam20c", "Cystm1", "Igf2r", "Ninj1", "Dyrk1a", "Higd1a", "Gigyf2", "Ctsl", "Gtf2f2", "Ahcyl2", "Hexa", "Gadd45b", "Cxcl3", "Csf2rb2", "BC005537", "Acsl1", "Tra2a", "Gbe1", "Micu1", "Dedd2", "Rpl12", "Mtdh", "Vmp1", "G3bp1", "Atf4", "Cpeb4", "Ostf1", "Lasp1", "Scarb2", "Irs2", "Fubp1", "Pmaip1", "Pdpk1", "Ccrl2", "Rbks", "Ifi207", "Map2k1", "Bcl6", "Ddi2", "Hk2", "Epb41l2", "Klf10", "Senp2", "Egr1", "Rell1", "Camk2d", "Dnajc5", "Srsf2", "Ncoa3", "Nfkbia", "Rreb1", "Tec", "Hbegf", "Hspa4l", "Znrf1", "Prdx1", "Crebrf", "Ep400", "Traf1", "Ints6", "Bmpr1a", "Atg7", "Hsp90b1", "Zfp36l2", "Creg1", "Spp1", "Esd", "Gpi1", "Ago2", "Rnf213", "Itpr2", "Akap13", "Txnip")
+
+# from TAN.Other.Markers.In.Vivo.txt
+TAN.Other.Markers.in.vivo <- c("Stk17b", "Cxcr2", "Ncf2", "Sell", "Arhgap15", "Samhd1", "Tpd52", "S100a6", "S100a11", "Csf3r", "Cd52", "Selplg", "Actb", "Alox5ap", "Zyx", "Pirb", "Pglyrp1", "Coro1a", "Itgal", "Ifitm2", "Ifitm1", "Ifitm6", "Lsp1", "Hp", "AB124611", "Actg1", "Ripor2", "Tgfbi", "Retnlg", "Lrg1", "Entpd1", "Tmsb4x", "Rac2", "S100a9", "Hdc", "Lcp1", "S100a8", "Pi16", "Taldo1", "Mcemp1", "Cmah", "Lcn2", "Gk", "Anxa1", "Gmfg", "Mxd1", "Tspo", "Klhl2", "Ccnd3", "Sema4a", "Cd33", "Niban1", "Qsox1", "Prr13", "Ssh2", "Ly6g", "Pilra", "Cnn2", "Wfdc17", "Trem1", "Mrgpra2b", "Sirpb1b", "Rab44", "Trem3", "Klf3", "Svil", "Rdh12", "Fry", "Ndel1", "Hcls1", "Picalm", "Gda", "Lbr", "Wfdc21", "Ptpn1", "Ccpg1", "Flna", "Themis2", "Cd300lb", "Cd300ld", "Mmp8", "Plaur", "Crispld2", "Spi1", "Sorl1", "Fyb", "Adam8", "Pbx1", "Gpsm3", "R3hdm4", "Emb", "Mmp25", "Lmnb1", "Gm5150", "Rps9", "Coq10b", "Ralgapa1", "Dgat1", "Mctp2", "Mrpl33", "Capzb", "Siglece", "Lyn", "Ptprc", "Nfam1", "Ipcef1", "Msrb1", "Slc16a3", "Ltb4r1", "A530064D06Rik", "Cmtm6", "Pygl", "Hck", "Map2k4", "Arhgap30", "Il1b", "Steap4", "Cytip", "Slc22a15", "Dusp16", "Grk2", "Glipr2", "Ppp1r3b", "Lst1", "Fgl2", "Cdkn2d", "Ankrd44", "Tmcc1", "H2-D1", "Anxa2", "Selenon", "Nsd3", "Ddx6", "Trim30b", "G0s2", "Jaml", "Gpx1", "Stat4", "Trps1", "Ly6c2", "Cotl1", "Ltb", "Pip5k1b", "Dgat2", "Cd177", "Arhgdib", "Ceacam10", "Rassf3", "Lyz2", "Dhrs7", "Cdk2ap2", "Tgm1", "Pde4b", "Sirpb1c", "Usp38", "Rhog", "Sfxn5", "Fgr", "St3gal4", "Stard7", "Tpm4", "Adam19", "Itm2b", "Arih1", "Il1rap", "Ifitm3", "Dhrs9", "Slc2a3", "Sbno2", "Rnasel", "H2-Q10", "Nlrp12", "Kdm7a", "Fbxl5", "Etv6", "Notch2", "Sipa1l1", "Gpcpd1", "Mrps28", "Id1", "Braf", "Hsd11b1", "Kdm6b", "Txnrd1", "Atrn", "Gcnt2", "Homer1", "Socs3", "Smchd1", "Trf", "Tes", "Tgm2", "Ell2", "Asprv1", "Itpkb", "Dstn", "Tkt", "Ifi27l2a")
+
+# from CAF.Neutrophil.Targets.MSA2.Up.txt
+MSA2.Induced.CAF.To.Neutrophil.Targets <- c("F3", "Fos", "Hmox1", "Icam1", "Inhba", "Ptgs2", "Pttg1", "Slc7a11", "Tnfaip3", "Capg", "Ccl4", "Ddit3", "Dusp1", "Gadd45a", "H2-D1", "H2-K1", "H2-Q4", "H2-Q6", "H2-Q7", "Ier3", "Ifit1", "Ifit3", "Ifit3b", "S100a9", "Tent5a", "Tiparp", "Tnf", "Atf3", "Bcl2l1", "Cited2", "Fas", "Ifi204", "Ifi206", "Ifi207", "Ifi209", "Ifi211", "Il1a", "Irf7", "Jun", "Nfkbia", "Sat1", "Stat1", "Tgif1", "Thbs1", "Trib1", "Cebpb", "Ankrd33b", "Cflar", "Isg20", "Lmnb1", "Zfp36", "Ifit2", "Nedd9", "Smad3", "Plaur", "Abca1", "Ctsd", "Ctsz", "Ehd1", "Gch1", "Grn", "Ier5", "Marcksl1", "Msrb1", "Rps6ka2", "Stk17b", "Tgfbi", "Dedd2", "Ppp1r15a", "Anxa1", "Fth1", "Irf9", "Ninj1", "S100a11", "Slc31a2", "Slc38a2", "Zyx", "Klf6", "Phlda1", "Ubc", "Arid5b", "Igf1r", "Sod2", "Cxcl2", "Traf1", "Alox5ap", "Bst2", "Gbp2", "Herc6", "Nfkbiz", "Oas3", "Parp14", "Rsad2", "Samd9l", "Stx11", "Tank", "Tnfaip6", "Tnip1", "Tspo", "Asph", "B2m", "Casp4", "Glrx", "H2-T22", "H2-T23", "Ifitm2", "Ifitm3", "Ifitm6", "Lcn2", "Nampt", "Itpr2", "Ly6e", "Por", "Ddx60", "Igsf6", "Snx20", "Timp2", "Ubb")
+
+```
+
+The Interferon alpha response gene set is extracted from the MSigDB database
+```{r}
+library(msigdbr)
+```
+
+```{r}
+hall_mark_pathways <- msigdbr("Mus musculus", "H")
+```
+
+```{r}
+HALLMARK_TYPE_I_IFN_SIGNALING <- hall_mark_pathways %>%
+  filter(gs_name %in% "HALLMARK_INTERFERON_ALPHA_RESPONSE") %>%
+  pull(gene_symbol)
+```
+
+A function to output a dataframe with Z-scores for a signature
+```{r}
+export_zs <- function(in_sign, dds, Full_Sample_Meta_Compvar) {
+  
+  DNRC <- counts(dds, normalized=TRUE) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Gene")
+
+  DNRC_long <- DNRC %>% 
+  gather(key = Sample, value = DNRC, -Gene)
+  
+  sample_info <- Full_Sample_Meta_Compvar %>%
+    filter(Sample %in% unique(DNRC_long$Sample))
+  
+  sig_df <- DNRC_long %>%
+    mutate_if(is.character,as.factor) %>% 
+    filter(Gene %in% in_sign) %>%
+    filter(Sample %in% sample_info$Sample) %>%
+    group_by(Gene) %>%
+    mutate(Z = (DNRC - mean(DNRC)) / sd(DNRC)) %>%
+    drop_na() %>%
+    group_by(Sample) %>%
+    summarise(sign_Z = mean(Z) %>% round(2)) %>%
+    left_join(sample_info, by = "Sample")
+  
+  return(sig_df)
+}
+```
+
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(scales)  # For consistent tick length using rescale
+
+# Define the function
+plot_sign_Z <- function(data, x_axis_var, x_label = NULL, y_label = "sign_Z") {
+  
+  # Reshape the data to wide format based on Pairing_batch
+  data_wide <- data %>%
+    select(Pairing_batch, sign_Z, !!sym(x_axis_var)) %>%
+    pivot_wider(names_from = !!sym(x_axis_var), values_from = sign_Z)
+  
+  # Get the unique levels of the x_axis_var for the paired Wilcoxon test columns
+  x_levels <- unique(data[[x_axis_var]])
+  if(length(x_levels) != 2) stop("x_axis_var must have exactly two levels for paired Wilcoxon test.")
+  
+  # Perform paired Wilcoxon test
+  wilcox_result <- wilcox.test(data_wide[[x_levels[1]]], data_wide[[x_levels[2]]], paired = TRUE)
+  p_value <- wilcox_result$p.value
+  
+  # Assign significance levels or display "ns" if p_value > 0.05
+  significance_label <- ifelse(
+    p_value > 0.05, 
+    "ns",  # If p-value is greater than 0.05, show "ns"
+    case_when(
+      p_value <= 0.05 & p_value > 0.01 ~ "*",
+      p_value <= 0.01 & p_value > 0.001 ~ "**",
+      p_value <= 0.001 & p_value > 0.0001 ~ "***",
+      p_value <= 0.0001 ~ "****"
+    )
+  )
+  
+  # Calculate y-position for significance label and bar
+  y_position <- max(data$sign_Z, na.rm = TRUE) * 1.25  # Position of significance stars
+  y_range <- diff(range(data$sign_Z, na.rm = TRUE))
+  tick_length <- y_range * 0.075  # Adjust tick length relative to y-axis range
+  
+  # Create the plot
+  p <- ggplot(data, aes_string(x = x_axis_var, y = "sign_Z", group = "Pairing_batch")) +
+    geom_point(color = "black", size = 3) +  # Set points to black
+    geom_line(aes(group = Pairing_batch), color = "black", size = 0.75) +
+    labs(
+      x = ifelse(is.null(x_label), x_axis_var, x_label),
+      y = y_label
+    ) +
+    theme_bw() +
+    theme(
+      axis.text.x = element_text(angle = 45, hjust = 1),
+      legend.position = "none"
+    ) +
+    # Add main significance bar (adjusted closer to the stars)
+    geom_segment(aes(x = 1, xend = 2, y = y_position - tick_length * 0.5, yend = y_position - tick_length * 0.5), 
+                 color = "black", size = 0.5) +
+    # Add left tick
+    geom_segment(aes(x = 1, xend = 1, y = y_position - tick_length * 0.5 - tick_length * 0.5, 
+                     yend = y_position - tick_length * 0.5 + tick_length * 0.5), color = "black", size = 0.5) +
+    # Add right tick
+    geom_segment(aes(x = 2, xend = 2, y = y_position - tick_length * 0.5 - tick_length * 0.5, 
+                     yend = y_position - tick_length * 0.5 + tick_length * 0.5), color = "black", size = 0.5) +
+    # Add significance label above the bar
+    annotate("text", x = 1.5, y = y_position, label = significance_label, size = 6)
+  
+  return(p)
+}
+```
+
+# Figure 6F to H
+```{r}
+MSA2.Induced.CAF.To.Neutrophil.Targets.Z.Scores.DMXAA <- export_zs(in_sign = MSA2.Induced.CAF.To.Neutrophil.Targets, dds = dds, Full_Sample_Meta_Compvar = Sample_md)
+p1 <- plot_sign_Z(MSA2.Induced.CAF.To.Neutrophil.Targets.Z.Scores.DMXAA, "Treatment", x_label = "", y_label = "CAF to Neutrophil Targets\nInduced in vivo - Z-Score")
+
+TAN.2.in.vivo.Z.Scores.DMXAA <- export_zs(in_sign = TAN.2.Markers.in.vivo, dds = dds, Full_Sample_Meta_Compvar = Sample_md)
+p2 <- plot_sign_Z(TAN.2.in.vivo.Z.Scores.DMXAA, "Treatment", x_label = "", y_label = "TAN2 Subtype\nSignature Z-Score")
+
+HALLMARK.TYPE.I.IFN.SIGNALING.Z.Scores.DMXAA <- export_zs(in_sign = HALLMARK_TYPE_I_IFN_SIGNALING, dds = dds, Full_Sample_Meta_Compvar = Sample_md)
+p3 <- plot_sign_Z(HALLMARK.TYPE.I.IFN.SIGNALING.Z.Scores.DMXAA, "Treatment", x_label = "", y_label = "HALLMARK Interferon Alpha\nResponse Signature Z-Score")
+```
+
+
+```{r}
+fig_6F_plot <- cowplot::plot_grid(p1, p2, p3, nrow = 3)
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = fig_6F_plot, "Figure_6F_to_H_Neutr_DMXAA_tr_PSC_CM_ZScores.pdf", width = 3.25, height = 8.3, units = "in", path = "Figure_6/")
+```
+
+# Figure S10D
+```{r}
+TAN.1.in.vivo.Z.Scores.DMXAA <- export_zs(in_sign = TAN.1.Markers.in.vivo, dds = dds, Full_Sample_Meta_Compvar = Sample_md)
+p1 <- plot_sign_Z(TAN.1.in.vivo.Z.Scores.DMXAA, "Treatment", x_label = "", y_label = "TAN1 Subtype\nSignature Z-Score")
+
+TAN.3.in.vivo.Z.Scores.DMXAA <- export_zs(in_sign = TAN.3.Markers.in.vivo, dds = dds, Full_Sample_Meta_Compvar = Sample_md)
+p2 <- plot_sign_Z(TAN.3.in.vivo.Z.Scores.DMXAA, "Treatment", x_label = "", y_label = "TAN3 Subtype\nSignature Z-Score")
+
+fig_S10D_plot <- plot_grid(p1, p2, nrow = 1)
+
+if (!dir.exists("Figure_S10")) {dir.create("Figure_S10")}
+ggsave(plot = fig_S10D_plot, "Figure_S10D_Neutr_DMXAA_tr_PSC_CM_ZScores.pdf", width = 7.25, height = 3.125, units = "in", path = "Figure_S10/")
+```
+
+# List of DEGs
+Differentially expressed genes are extracted and saved as a table
+```{r}
+return_DEGs <- function(sel_treat_group, sel_ctrl_group, Means_FC_qvals) {
+library(tidyverse)
+DEGs<- Means_FC_qvals %>% 
+  filter(treat_group %in% sel_treat_group)  %>% 
+  filter(ctrl_group %in% sel_ctrl_group)  %>% 
+  mutate(logFC=log(FC)) %>% 
+  filter(abs(logFC) > 0.405 & padj < 0.05)
+
+return(DEGs)
+}
+```
+
+```{r}
+DMXAA.Neutro.DEGs <- return_DEGs("DMXAA", "DMSO", Means_FC_qvals)
+
+#write.table(DMXAA.Neutro.DEGs, "DMXAA.Neutro.DEGs.txt", sep = "\t")
+```
+

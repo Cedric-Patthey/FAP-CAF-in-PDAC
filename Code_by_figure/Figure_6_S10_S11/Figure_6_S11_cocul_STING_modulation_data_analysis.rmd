@@ -1,0 +1,988 @@
+---
+title: "Figure_6_Paired_Reps_Only_H151_25_DMXAA"
+author: "Joshua"
+date: "2024-11-08"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Summary
+The code below was used to generate Figures 6 L-P and S11 B-E of Cumming et al, 2025. This relates to the mouse bulk RNA-seq data from 167 samples of co-cultures of pancreatic stellate cells (PSC) with Tumour organoid cells, treated with DMSO, DMXAA or H151. The PSC and Tumour cells were separated by FACS. The count data file `cocul_STING_modulation_167s_HT_counts.txt` and the metadata file `cocul_STING_modulation_167s_sample_metadata.txt` are available on ArrayExpress with accession numbers E-MTAB-14946. 
+
+# Dependencies
+```{r, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(ggrepel)
+library(cowplot)
+options(dplyr.summarise.inform=FALSE) # Silences an annoying warning by the summarise function
+```
+Note: DESeq2 call an array of other packages, some of which interfere with the packages of the tidyverse suite. The DEseq2 library is loaded further below
+
+# Data
+Raw read count from htSeq is loaded
+```{r}
+RRC_long <- read.table("cocul_STING_modulation_167s_HT_counts.txt", header = T) %>%
+  select(-c(EnsID))
+
+```
+
+The Sample metadata was made manually. It contains information about batches, replicates and biological variables. Hea
+```{r}
+Sample_md <- read.table("cocul_STING_modulation_167s_sample_metadata.txt", header = T)
+```
+
+A comparison variable is added as the combination of treatment, culture_type and cell_type 
+```{r}
+Sample_md_Compvar <- Sample_md %>% 
+  mutate(Condition = paste(Treatment, Culture_type, Cell_type, sep = "_"),
+    Run_Paired = ifelse(Biol_replicate == "T4P4", paste0(Run, ".1"), Run)) %>%  # Modify Run if Biol_replicate is "T4P4"
+  select(Sample, Run, Biol_replicate, Treatment, Culture_type, Cell_type, Condition, pairing_batch, Run_Paired)
+
+Sample_md_Compvar_Paired_Runs_H151_25_DMXAA <- Sample_md_Compvar %>%
+  filter(Run %in% c("RunA", "RunB", "RunC", "Run2", "Run3", "Run5"))
+
+##Remove sample which is not paired (B56 - Mono PSC)
+```
+
+```{r}
+Make_DESeq_Object <- function(Full_Sample_Meta_Compvar, Full_RRC_long, in_conditions) {
+  
+  Sample_md_Filtered <- Full_Sample_Meta_Compvar %>% 
+  filter(Condition %in% in_conditions)  %>%
+  group_by(pairing_batch) %>%
+  filter(n() > 1) %>%  # Keep only rows where the pairing_batch has more than one occurrence
+  ungroup()
+  
+  Filtered_RRC_long <- Full_RRC_long %>%
+  filter(Sample %in% Sample_md_Filtered$Sample)
+  
+  Filtered_RRC <- Filtered_RRC_long %>% 
+  mutate(Sample=factor(Sample, levels = unique(Filtered_RRC_long$Sample))) %>% 
+  spread(key = Sample, value = RRC) 
+
+  Filtered_RRC_mx <- Filtered_RRC %>% 
+  column_to_rownames("Gene") 
+  
+  library(DESeq2)
+
+  dds <- DESeqDataSetFromMatrix(countData = Filtered_RRC_mx,
+                              colData = Sample_md_Filtered,
+                              design= ~ Run_Paired + Condition)
+
+  dds <- DESeq(dds)
+  
+  return(dds)
+}
+```
+
+```{r}
+dds_DMXAA_PSC <- Make_DESeq_Object(Sample_md_Compvar_Paired_Runs_H151_25_DMXAA, RRC_long, c("DMXAA_Mono_PSC", "DMSO_Mono_PSC", "DMXAA_Cocul_PSC", "DMSO_Cocul_PSC"))
+dds_DMXAA_T <- Make_DESeq_Object(Sample_md_Compvar_Paired_Runs_H151_25_DMXAA, RRC_long, c("DMXAA_Mono_T", "DMSO_Mono_T", "DMXAA_Cocul_T", "DMSO_Cocul_T"))
+dds_H151_PSC <- Make_DESeq_Object(Sample_md_Compvar_Paired_Runs_H151_25_DMXAA, RRC_long, c("H151_25_Mono_PSC", "DMSO_Mono_PSC", "H151_25_Cocul_PSC", "DMSO_Cocul_PSC"))
+dds_H151_T <- Make_DESeq_Object(Sample_md_Compvar_Paired_Runs_H151_25_DMXAA, RRC_long, c("H151_25_Mono_T", "DMSO_Mono_T", "H151_25_Cocul_T", "DMSO_Cocul_T"))
+```
+
+A function is made to extract q values between groups
+```{r}
+Qs <- function(dds, grouping_var, treat_group, ctrl_group) {
+  comp_df <- results(dds, c(grouping_var, treat_group, ctrl_group), independentFiltering = FALSE) %>%
+    as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    mutate(FC=2^log2FoldChange) %>% 
+    select(Gene, FC, padj) %>%
+    mutate(ctrl_group = ctrl_group, treat_group = treat_group)
+  
+  return(comp_df)
+}
+```
+
+```{r}
+FC_qvals_DMXAA <- Qs(dds_DMXAA_PSC, "Condition", "DMXAA_Mono_PSC", "DMSO_Mono_PSC") %>% 
+  bind_rows(Qs(dds_DMXAA_PSC, "Condition", "DMXAA_Cocul_PSC", "DMSO_Cocul_PSC")) %>% 
+  
+  bind_rows(Qs(dds_DMXAA_T, "Condition", "DMXAA_Mono_T", "DMSO_Mono_T")) %>% 
+  bind_rows(Qs(dds_DMXAA_T, "Condition", "DMXAA_Cocul_T", "DMSO_Cocul_T")) %>% 
+  
+  bind_rows(Qs(dds_DMXAA_T, "Condition", "DMSO_Cocul_T", "DMSO_Mono_T")) %>% 
+  bind_rows(Qs(dds_DMXAA_T, "Condition", "DMXAA_Cocul_T", "DMXAA_Mono_T"))
+  
+ FC_qvals_H151 <- Qs(dds_H151_PSC, "Condition", "H151_25_Mono_PSC", "DMSO_Mono_PSC") %>% 
+  bind_rows(Qs(dds_H151_PSC, "Condition", "H151_25_Cocul_PSC", "DMSO_Cocul_PSC")) %>% 
+  
+  bind_rows(Qs(dds_H151_T, "Condition", "H151_25_Mono_T", "DMSO_Mono_T")) %>% 
+  bind_rows(Qs(dds_H151_T, "Condition", "H151_25_Cocul_T", "DMSO_Cocul_T")) %>% 
+  
+  bind_rows(Qs(dds_H151_T, "Condition", "DMSO_Cocul_T", "DMSO_Mono_T")) %>% 
+  bind_rows(Qs(dds_H151_T, "Condition", "H151_25_Cocul_T", "H151_25_Mono_T"))
+```
+
+```{r}
+Mean_Qs <- function(dds, grouping_var, treat_group, ctrl_group, Full_Sample_Meta_Compvar) {
+  FC_qvals <- results(dds, c(grouping_var, treat_group, ctrl_group)) %>%
+    as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    mutate(FC=2^log2FoldChange) %>% 
+    select(Gene, FC, padj) %>%
+    mutate(ctrl_group = ctrl_group, treat_group = treat_group)
+  
+  DNRC <- counts(dds, normalized=TRUE) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Gene")
+
+  DNRC_long <- DNRC %>% 
+  gather(key = Sample, value = DNRC, -Gene)
+  
+  Sample_md_Filtered <- Full_Sample_Meta_Compvar %>% 
+  filter(Condition %in% c(treat_group, ctrl_group))  %>%
+  group_by(Run_Paired) %>%
+  filter(n() > 1) %>%  # Keep only rows where the pairing_batch has more than one occurrence
+  ungroup()
+  
+  group_DNRC <-DNRC_long %>% 
+  left_join(Sample_md_Filtered, by = "Sample") %>% 
+  group_by(Gene, Condition) %>% 
+  summarise(mean_DNRC=round(mean(DNRC), 3)) 
+  
+  Means_FC_qvals <- FC_qvals %>% 
+  left_join(group_DNRC, by=c("Gene","ctrl_group" = "Condition")) %>% 
+  dplyr::rename(ctrl_mean_DNRC=mean_DNRC) %>% 
+  left_join(group_DNRC, by=c("Gene","treat_group" = "Condition")) %>% 
+  dplyr::rename(treat_mean_DNRC=mean_DNRC) %>% 
+  mutate(FC=round(FC, 2)) %>% 
+  drop_na()
+  
+  return(Means_FC_qvals)
+  
+}
+```
+
+```{r}
+Means_FC_qvals_DMXAA <- Mean_Qs(dds_DMXAA_PSC, "Condition", "DMXAA_Mono_PSC", "DMSO_Mono_PSC", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA) %>% 
+  bind_rows(Mean_Qs(dds_DMXAA_PSC, "Condition", "DMXAA_Cocul_PSC", "DMSO_Cocul_PSC", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)) %>% 
+  
+  bind_rows(Mean_Qs(dds_DMXAA_T, "Condition", "DMXAA_Mono_T", "DMSO_Mono_T", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)) %>% 
+  bind_rows(Mean_Qs(dds_DMXAA_T, "Condition", "DMXAA_Cocul_T", "DMSO_Cocul_T", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)) %>% 
+  
+  bind_rows(Mean_Qs(dds_DMXAA_T, "Condition", "DMSO_Cocul_T", "DMSO_Mono_T", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)) %>% 
+  bind_rows(Mean_Qs(dds_DMXAA_T, "Condition", "DMXAA_Cocul_T", "DMXAA_Mono_T", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA))
+  
+Means_FC_qvals_H151 <- Mean_Qs(dds_H151_PSC, "Condition", "H151_25_Mono_PSC", "DMSO_Mono_PSC", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA) %>% 
+  bind_rows(Mean_Qs(dds_H151_PSC, "Condition", "H151_25_Cocul_PSC", "DMSO_Cocul_PSC", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)) %>% 
+  
+  bind_rows(Mean_Qs(dds_H151_T, "Condition", "H151_25_Mono_T", "DMSO_Mono_T", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)) %>% 
+  bind_rows(Mean_Qs(dds_H151_T, "Condition", "H151_25_Cocul_T", "DMSO_Cocul_T", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)) %>% 
+  
+  bind_rows(Mean_Qs(dds_H151_T, "Condition", "DMSO_Cocul_T", "DMSO_Mono_T", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)) %>% 
+  bind_rows(Mean_Qs(dds_H151_T, "Condition", "H151_25_Cocul_T", "H151_25_Mono_T", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA))
+```
+
+A function to output a dataframe with Z-scores
+```{r}
+export_zs <- function(in_sign, dds, Full_Sample_Meta_Compvar) {
+  
+  DNRC <- counts(dds, normalized=TRUE) %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Gene")
+
+  DNRC_long <- DNRC %>% 
+  gather(key = Sample, value = DNRC, -Gene)
+  
+  sample_info <- Full_Sample_Meta_Compvar %>%
+    filter(Sample %in% unique(DNRC_long$Sample))
+  
+  sig_df <- DNRC_long %>%
+    mutate_if(is.character,as.factor) %>% 
+    filter(Gene %in% in_sign) %>%
+    filter(Sample %in% sample_info$Sample) %>%
+    group_by(Gene) %>%
+    mutate(Z = (DNRC - mean(DNRC)) / sd(DNRC)) %>%
+    drop_na() %>%
+    group_by(Sample) %>%
+    summarise(sign_Z = mean(Z) %>% round(2)) %>%
+    left_join(sample_info, by = "Sample")
+  
+  return(sig_df)
+}
+
+```
+
+```{r}
+plot_sign_Z_multiple <- function(data, x_axis_var, comparisons, pairing_var, x_order = NULL, x_label = NULL, y_label = "sign_Z") {
+  # Ensure x_axis_var is a factor
+  if (!is.null(x_order)) {
+    data[[x_axis_var]] <- factor(data[[x_axis_var]], levels = x_order)
+  }
+  
+  # Paired Wilcoxon tests
+  test_results <- lapply(comparisons, function(pair) {
+    paired_data <- data %>%
+      filter(!!sym(x_axis_var) %in% pair) %>%
+      pivot_wider(
+        id_cols = !!sym(pairing_var), 
+        names_from = !!sym(x_axis_var), 
+        values_from = "sign_Z"
+      ) %>%
+      drop_na()
+    
+    cat("\nInspecting paired data for comparison: ", pair, "\n")
+    print(paired_data)
+    
+    if (nrow(paired_data) > 0) {
+      wilcox.test(paired_data[[pair[1]]], paired_data[[pair[2]]], paired = TRUE)
+    } else {
+      warning(paste("Not enough paired data for comparison:", paste(pair, collapse = " vs ")))
+      return(NULL)
+    }
+  })
+  
+  # Extract p-values and significance labels
+  p_values <- sapply(test_results, function(res) if (!is.null(res)) res$p.value else NA)
+  significance_labels <- sapply(p_values, function(p) {
+    if (is.na(p)) "ns" else if (p <= 0.0001) "****" else if (p <= 0.001) "***" else if (p <= 0.01) "**" else if (p <= 0.05) "*" else if (p > 0.05 & p <= 0.1) paste0("p = ", round(p, 3)) else "ns"
+  })
+  
+  # Set up y-axis adjustment
+  y_max <- max(data$sign_Z, na.rm = TRUE)
+  y_range <- diff(range(data$sign_Z, na.rm = TRUE))
+  tick_length <- y_range * 0.075
+  y_positions <- seq(y_max * 1.1, length.out = length(comparisons), by = tick_length * 1.5)
+  
+  # Plot
+  p <- ggplot(data, aes_string(x = x_axis_var, y = "sign_Z")) +
+    geom_boxplot(aes(fill = !!sym(x_axis_var)), alpha = 0.5, outlier.shape = NA) +
+    geom_jitter(aes(color = !!sym(x_axis_var)), width = 0.2, size = 2, alpha = 1) +
+    scale_x_discrete(limits = x_order) +
+    labs(x = x_label %||% x_axis_var, y = y_label) +
+    theme_bw() +
+    theme(axis.text.x = element_text(angle = 0, hjust = 1), legend.position = "none") +
+    scale_fill_manual(values = rep(c("gray80", "lightblue"), length.out = length(unique(data[[x_axis_var]])))) +
+    scale_color_manual(values = rep("gray20", length(unique(data[[x_axis_var]]))))
+  
+  # Add significance annotations
+  for (i in seq_along(comparisons)) {
+    pair <- comparisons[[i]]
+    x_coords <- match(pair, x_order)
+    if (!any(is.na(x_coords))) {
+      p <- p +
+        annotate("segment", x = x_coords[1], xend = x_coords[2], y = y_positions[i], yend = y_positions[i]) +
+        annotate("segment", x = x_coords[1], xend = x_coords[1], y = y_positions[i], yend = y_positions[i] - tick_length) +
+        annotate("segment", x = x_coords[2], xend = x_coords[2], y = y_positions[i], yend = y_positions[i] - tick_length) +
+        annotate("text", x = mean(x_coords), y = y_positions[i] + tick_length / 2, label = significance_labels[i], size = 6)
+    }
+  }
+  
+  return(p)
+}
+```
+
+
+Signatures from day6 co-culture single cell RNA-seq (Figure 3) are loaded. The signatures were generated with the code described in R markdown `Figure_3_S6_data_analysis.rmd`. The signatures are also available in supplementary table S6 of the paper. Here, the lists are explicitly loaded directly. 
+```{r}
+# Cluster 1 from PSC.singlets.rPCA.integrated
+myCAF_Sig <- c("Col5a3", "Adcy1", "Pmepa1", "Jag1", "Col1a1", "AA467197", "Itgb1", "Msn", "Klhdc8a", "Npr3", "Cdh11", "Fbn1", "Hbegf", "Slc20a1", "Tln2", "Inhba", "Tfpi2", "Tmsb4x", "Ttll5", "Cnn3", "Runx1", "Sparc", "Myl12a", "Acsbg1", "Acta2", "Csrp2", "Pdgfc", "Ccn4", "Gng11", "Bok", "Ncam1", "Timp3", "Has2", "Tes", "Col8a1", "Plau", "Megf10", "Tmeff1", "Sdc2", "Prkg2", "Serpinh1", "Tgfb3", "Pmaip1", "Ctsc", "Bhlhe41", "Tubb2b", "Creb3l1", "Zfp469", "Vim", "Nrep", "Vegfc", "Tagln", "Atp6v1g1", "Flna", "Postn", "Unc5b", "Col5a1", "Gm6169", "Cav1", "Stk17b", "Rnf149", "Tmsb10", "Plat", "Tars", "Col18a1", "Prss23", "Actg1", "Bhlhe40", "Col5a2", "Palld", "Creb3l2", "Frrs1", "Col6a3", "Crlf1", "Kdelr3", "Wnt5a", "Nrp1", "Uchl1", "Pdgfa", "Anxa2", "Prdx6", "Lrrc59", "Myh9", "Tuba1a", "Epha3", "Tubb3", "Plaur", "Pxdn", "Ccn2", "Crip1", "Ppic", "Bmp1", "Timp1", "Ndfip1", "Basp1", "Cyp51", "Ank", "Fgf2", "Tubb2a", "Cryab", "Vegfa", "Col1a2")
+
+# Cluster 4 from PSC.singlets.rPCA.integrated
+ifCAF_Sig <- c("Rsad2", "Oasl1", "Cxcl10", "Cmpk2", "Ifit3b", "Ifit3", "Igtp", "Gbp2", "Gbp3", "Ccl5", "Mx1", "Oasl2", "Ifih1", "Ifi44", "Stat2", "Rnd1", "Isg15", "Ifit1", "Phf11b", "Mx2", "Oas1b", "Tgtp1", "Usp18", "Gbp7", "Apol9a", "Tmem140", "Irf7", "Parp14", "Tgtp2", "Oas1g", "Dhx58", "Irgm2", "H2-Q6", "Herc6", "Iigp1", "Samd9l", "Atf3", "Ddx58", "Cxcl2", "Ifi204", "Gdf15", "Isg20", "Slc3a2", "Phf11d", "Oas3", "Adar", "Apol9b", "Ifi35", "Rnf213", "Ifi47", "Trim56", "Tor3a", "Mndal", "Ddx60", "H2-Q7", "Stat1", "Irgm1", "Gm4070", "Tapbp", "Pnpt1", "Enpp4", "Tlr3", "Trafd1", "H2-T10", "Trim30a", "Clic4", "Irf1", "Parp10", "Oas2", "Marchf5", "Aftph", "Zc3hav1", "Trim30d", "Eif2ak2", "H2-K1", "Ifi205", "Trex1", "Znfx1", "Ppp1r15a", "Trim25", "Nfkb2", "Il33", "Slfn2", "Parp12", "Rtp4", "Tap1", "Slfn8", "Xaf1", "Gem", "H4c9", "Ttc39c", "H2-T22", "Csrnp1", "H2aw", "Trim21", "Pnp", "Atf4", "Sqstm1", "Ifi203", "Tent5a", "Ddit3", "Lgals9", "P2rx7", "Parp9", "Arhgef2", "Relb", "Nfkb1", "Ccl2", "Daxx", "Aars", "Tnfaip3", "Irf9", "Ccnl1", "Gadd45b", "Arl14ep", "Tnip1", "Wdfy1", "Ifit2", "H2-T23", "Klf6", "Polr2g", "Chka", "Vcam1", "Tlr2", "H1f2", "Ifrd1")
+```
+
+```{r}
+myCAF.Z.Scores.DMXAA.PSC <- export_zs(in_sign = Cocul.myCAF.Sig, dds = dds_DMXAA_PSC, Full_Sample_Meta_Compvar = Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)
+
+ifCAF.Z.Scores.DMXAA.PSC <- export_zs(in_sign = Cocul.ifCAF.Sig, dds = dds_DMXAA_PSC, Full_Sample_Meta_Compvar = Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)
+```
+
+# Figure 6M
+```{r}
+comparisons <- list(c("DMXAA_Mono_PSC", "DMSO_Mono_PSC"), c("DMXAA_Cocul_PSC", "DMSO_Cocul_PSC"))
+x_order <- c("DMSO_Mono_PSC", "DMXAA_Mono_PSC", "DMSO_Cocul_PSC", "DMXAA_Cocul_PSC")
+pairing_var <- "Run_Paired"
+# Generate plot
+Fig_6M_plot <- plot_sign_Z_multiple(ifCAF.Z.Scores.DMXAA.PSC, "Condition", comparisons, pairing_var, x_order, x_label = "Condition", y_label = "ifCAF Z-Score")
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = Fig_6M_plot, "Figure_6M_ifCAF_Z_Score_DMXAA.pdf", width = 7.25, height = 3, units = "in", path = "Figure_6/")
+```
+
+#Figure 6N
+```{r}
+Fig_6M_plot <- plot_sign_Z_multiple(myCAF.Z.Scores.DMXAA.PSC, "Condition", comparisons, pairing_var, x_order, x_label = "Condition", y_label = "myCAF Z-Score")
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = Fig_6M_plot, "Figure_6N_myCAF_Z_Score_DMXAA.pdf", width = 7.25, height = 3, units = "in", path = "Figure_6/")
+```
+
+# EMT gene set signature scores
+```{r}
+library(msigdbr)
+```
+
+```{r}
+hall_mark_pathways <- msigdbr("Mus musculus", "H")
+```
+
+```{r}
+HALLMARK_EMT <- hall_mark_pathways %>%
+  filter(gs_name %in% "HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION") %>%
+  pull(gene_symbol)
+```
+
+A Z score is calculated for the list of genes in epithelial cells that are targets of CAF ligands repressed by MSA-2. The code to generate the lists is described in R markdown `Figure_6_S10_MSA2_in_vivo_CellChat.Rmd`. Here it is loaded directly
+```{r}
+MSA2.Repressed.CAF.Ligand.Targets.in.Epithelial <- c("Anxa3", "Bcl6", "Birc5", "Cav1", "Ccnd3", "Cd44", "Dusp5", "Egr1", "Fn1", "Gadd45a", "Gclc", "H3f3b", "Hes1", "Id2", "Igfbp3", "Il1r1", "Irs1", "Ndrg1", "Nek6", "Pthlh", "Smad7", "Spp1", "Tgfb1", "Tgif1", "Tnfrsf23", "Vcam1", "Vegfa", "Bdnf", "Cbx5", "Cdk4", "Cdk6", "Chd2", "Col1a2", "Egr3", "Odc1", "Rbpj", "Smad3", "Sytl2", "Vcan", "Acan", "Ets1", "Iqgap1", "Nup153", "Timp1", "Zfp36l1", "Caprin1", "Cd9", "Col4a1", "Col5a1", "Copa", "Runx1", "Sox4", "Zswim8", "Arid1a", "Etv4", "Scd2", "Tagln2", "Col1a1", "Ctnnb1", "Igf1r", "Itga5", "Nrp1", "Skil", "Chic2", "Dlg1", "Emp1", "Galnt1", "Etv1", "Itga6", "Nme1", "Ranbp1", "Tm4sf1", "Mxi1", "Tyms", "Dpysl2", "Fhl2", "Man1a", "Ptk2b", "Rtn4", "Slc14a1", "Anxa2", "Ap1s2", "Cald1", "Fndc3b", "Igfbp4", "Mmd", "Nme7", "Rgl1", "S100a6", "Tacc1", "Cdk1", "Cks1b", "Hif1a", "Rrm1", "Cuedc1", "Klf9", "Nfix", "Arid5b", "Mnat1", "Rgs2", "Snx12", "Mapk8", "Clu", "Gem", "Nfe2l2", "Nr2f1", "Pcdh7", "Psd3", "Yap1", "Zbtb20", "Ackr3", "Areg", "Btg3", "Dennd5a", "Ereg", "Inhba", "Nab1", "Pla2g4a", "Slc39a14", "Stc1", "Vegfc", "Anxa5", "Map1lc3b", "Pdap1", "Rhoa", "Brd8", "Dip2c", "Eif1ax", "Ifrd1", "Irx5", "Runx2", "Slc29a1", "Stmn1", "Tle3", "Top2a", "Tpx2", "Tubb2b", "Jag1", "Ltbp1", "Lamb1", "Cdkn2a", "Foxp1", "Hnrnpul1", "Nav2", "Smc4", "Syncrip", "Tpt1", "Ube2e2", "Zmiz1", "Shc1", "Dusp10", "Lsm6", "Map1b", "Npnt", "Pds5b", "Srsf3", "Atp10a", "En1", "Ndst3", "Pak3", "Sparc", "Abcb1a", "Abcb1b", "Asap1", "Bhlhe41", "Cadm1", "Gnas", "Zeb1", "Atad2", "Mcm7")
+```
+
+```{r}
+MSA2.Repressed.CAF.Ligand.Targets.in.Epithelial.Z.Scores.DMXAA.Tumour <- export_zs(in_sign = MSA2.Repressed.CAF.Ligand.Targets.in.Epithelial, dds = dds_DMXAA_T, Full_Sample_Meta_Compvar = Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)
+```
+
+#Figure 6O
+```{r}
+comparisons <- list(c("DMXAA_Mono_T", "DMSO_Mono_T"), c("DMXAA_Cocul_T", "DMSO_Cocul_T"))
+x_order <- c("DMSO_Mono_T", "DMXAA_Mono_T", "DMSO_Cocul_T", "DMXAA_Cocul_T")
+pairing_var <- "Run_Paired"
+# Generate plot
+Fig_6O_plot <- plot_sign_Z_multiple(MSA2.Repressed.CAF.Ligand.Targets.in.Epithelial.Z.Scores.DMXAA.Tumour, "Condition", comparisons, pairing_var, x_order, x_label = "Condition", y_label = "CAF to Epithelial Targets\nRepressed in vivo - Z-Score")
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = Fig_6O_plot, "Figure_6O_in_vivo_targets_Z_Score_DMXAA.pdf", width = 7.25, height = 3, units = "in", path = "Figure_6/")
+```
+
+```{r}
+EMT.Z.Scores.DMXAA.Tumour <- export_zs(in_sign = HALLMARK_EMT,  dds = dds_DMXAA_T, Full_Sample_Meta_Compvar = Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)
+```
+
+# Figure 6P
+```{r}
+comparisons <- list(c("DMXAA_Mono_T", "DMSO_Mono_T"), c("DMXAA_Cocul_T", "DMSO_Cocul_T"))
+x_order <- c("DMSO_Mono_T", "DMXAA_Mono_T", "DMSO_Cocul_T", "DMXAA_Cocul_T")
+pairing_var <- "Run_Paired"
+# Generate plot
+Fig_6P_plot <- plot_sign_Z_multiple(EMT.Z.Scores.DMXAA.Tumour, "Condition", comparisons, pairing_var, x_order, x_label = "Condition", y_label = "HALLMARK EMT\nSignature Z-Score")
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = Fig_6P_plot, "Figure_6P_HALLMARK_EMT_Z_Score_DMXAA.pdf", width = 7.25, height = 3, units = "in", path = "Figure_6/")
+```
+
+```{r}
+dds_DMXAA_Mono_PSC_vs_DMSO_Mono_PSC <- Make_DESeq_Object(Sample_md_Compvar_Paired_Runs_H151_25_DMXAA, RRC_long, c("DMXAA_Mono_PSC", "DMSO_Mono_PSC"))
+dds_DMXAA_Cocul_PSC_vs_DMSO_Cocul_PSC <- Make_DESeq_Object(Sample_md_Compvar_Paired_Runs_H151_25_DMXAA, RRC_long, c("DMXAA_Cocul_PSC", "DMSO_Cocul_PSC"))
+dds_DMXAA_Mono_T_vs_DMSO_Mono_T <- Make_DESeq_Object(Sample_md_Compvar_Paired_Runs_H151_25_DMXAA, RRC_long, c("DMXAA_Mono_T", "DMSO_Mono_T"))
+dds_DMXAA_Cocul_T_vs_DMSO_Cocul_T <- Make_DESeq_Object(Sample_md_Compvar_Paired_Runs_H151_25_DMXAA, RRC_long, c("DMXAA_Cocul_T", "DMSO_Cocul_T"))
+
+dds_H151_25_Mono_PSC_vs_DMSO_Mono_PSC <- Make_DESeq_Object(Sample_md_Compvar_Paired_Runs_H151_25_DMXAA, RRC_long, c("H151_25_Mono_PSC", "DMSO_Mono_PSC"))
+dds_H151_25_Cocul_PSC_vs_DMSO_Cocul_PSC <- Make_DESeq_Object(Sample_md_Compvar_Paired_Runs_H151_25_DMXAA, RRC_long, c("H151_25_Cocul_PSC", "DMSO_Cocul_PSC"))
+dds_H151_25_Mono_T_vs_DMSO_Mono_T <- Make_DESeq_Object(Sample_md_Compvar_Paired_Runs_H151_25_DMXAA, RRC_long, c("H151_25_Mono_T", "DMSO_Mono_T"))
+dds_H151_25_Cocul_T_vs_DMSO_Cocul_T <- Make_DESeq_Object(Sample_md_Compvar_Paired_Runs_H151_25_DMXAA, RRC_long, c("H151_25_Cocul_T", "DMSO_Cocul_T"))
+```
+
+```{r}
+FC_qvals_All_Comps <- Qs(dds_DMXAA_Mono_PSC_vs_DMSO_Mono_PSC, "Condition", "DMXAA_Mono_PSC", "DMSO_Mono_PSC") %>% 
+  bind_rows(Qs(dds_DMXAA_Cocul_PSC_vs_DMSO_Cocul_PSC, "Condition", "DMXAA_Cocul_PSC", "DMSO_Cocul_PSC")) %>% 
+  bind_rows(Qs(dds_DMXAA_Mono_T_vs_DMSO_Mono_T, "Condition", "DMXAA_Mono_T", "DMSO_Mono_T")) %>% 
+  bind_rows(Qs(dds_DMXAA_Cocul_T_vs_DMSO_Cocul_T, "Condition", "DMXAA_Cocul_T", "DMSO_Cocul_T")) %>% 
+  
+  bind_rows(Qs(dds_H151_25_Mono_PSC_vs_DMSO_Mono_PSC, "Condition", "H151_25_Mono_PSC", "DMSO_Mono_PSC")) %>% 
+  bind_rows(Qs(dds_H151_25_Cocul_PSC_vs_DMSO_Cocul_PSC, "Condition", "H151_25_Cocul_PSC", "DMSO_Cocul_PSC")) %>% 
+  bind_rows(Qs(dds_H151_25_Mono_T_vs_DMSO_Mono_T, "Condition", "H151_25_Mono_T", "DMSO_Mono_T")) %>% 
+  bind_rows(Qs(dds_H151_25_Cocul_T_vs_DMSO_Cocul_T, "Condition", "H151_25_Cocul_T", "DMSO_Cocul_T")) 
+```
+
+```{r}
+Means_FC_qvals_All_Comps <- Mean_Qs(dds_DMXAA_Mono_PSC_vs_DMSO_Mono_PSC, "Condition", "DMXAA_Mono_PSC", "DMSO_Mono_PSC", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA) %>% 
+  bind_rows(Mean_Qs(dds_DMXAA_Cocul_PSC_vs_DMSO_Cocul_PSC, "Condition", "DMXAA_Cocul_PSC", "DMSO_Cocul_PSC", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)) %>% 
+  bind_rows(Mean_Qs(dds_DMXAA_Mono_T_vs_DMSO_Mono_T, "Condition", "DMXAA_Mono_T", "DMSO_Mono_T", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)) %>% 
+  bind_rows(Mean_Qs(dds_DMXAA_Cocul_T_vs_DMSO_Cocul_T, "Condition", "DMXAA_Cocul_T", "DMSO_Cocul_T", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)) %>% 
+  
+  bind_rows(Mean_Qs(dds_H151_25_Mono_PSC_vs_DMSO_Mono_PSC, "Condition", "H151_25_Mono_PSC", "DMSO_Mono_PSC", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)) %>% 
+  bind_rows(Mean_Qs(dds_H151_25_Cocul_PSC_vs_DMSO_Cocul_PSC, "Condition", "H151_25_Cocul_PSC", "DMSO_Cocul_PSC", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)) %>% 
+  bind_rows(Mean_Qs(dds_H151_25_Mono_T_vs_DMSO_Mono_T, "Condition", "H151_25_Mono_T", "DMSO_Mono_T", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)) %>% 
+  bind_rows(Mean_Qs(dds_H151_25_Cocul_T_vs_DMSO_Cocul_T, "Condition", "H151_25_Cocul_T", "DMSO_Cocul_T", Sample_md_Compvar_Paired_Runs_H151_25_DMXAA))
+```
+
+# Drug-modulated genes per condition
+The DE genes are extracted with lenient cutoff for plotting purposes
+```{r}
+LenSel_Means_FC_qvals_All_Comps <- Means_FC_qvals_All_Comps %>% 
+  filter(map2(ctrl_mean_DNRC, treat_mean_DNRC, max)>3) %>% 
+  mutate(FC = FC+0.01) %>%
+  mutate(logFC=log(FC)) %>% 
+  filter(abs(logFC)>0.1) %>% 
+  filter(padj<0.8) %>% 
+  arrange(desc(FC))
+```
+
+DEGs which are enriched in co-culture compared to mono-culture for tumour cells in DMSO but not DMXAA
+```{r}
+return_DEGs <- function(sel_treat_group, sel_ctrl_group, Means_FC_qvals) {
+library(tidyverse)
+DEGs<- Means_FC_qvals %>% 
+  filter(treat_group %in% sel_treat_group & ctrl_group %in% sel_ctrl_group)  %>% 
+  mutate(logFC=log(FC)) %>% 
+  #filter(abs(logFC) > 0.405 & padj < 0.05) %>% 
+  filter(padj < 0.05)
+
+return(DEGs)
+}
+```
+
+```{r}
+DMXAA.Tumour.Co.DEGs <- return_DEGs("DMXAA_Cocul_T", "DMSO_Cocul_T", Means_FC_qvals_All_Comps)
+
+#write.table(DMXAA.Tumour.Co.DEGs, "/DMXAA.Tumour.Co.DEGs.txt", sep = "\t")
+```
+
+```{r}
+DMXAA.Regulated.EMT.Genes.Co <- intersect(HALLMARK_EMT, DMXAA.Tumour.Co.DEGs$Gene)
+```
+
+```{r}
+DMXAA.Tumour.Mono.DEGs <- return_DEGs("DMXAA_Mono_T", "DMSO_Mono_T", Means_FC_qvals_All_Comps)
+
+#write.table(DMXAA.Tumour.Mono.DEGs, "DMXAA.Tumour.Mono.DEGs.txt", sep = "\t")
+
+DMXAA.Regulated.EMT.Genes.Mono <- intersect(HALLMARK_EMT, DMXAA.Tumour.Mono.DEGs$Gene)
+```
+
+```{r}
+DMXAA.Co.Specific.EMT.Genes <- setdiff(DMXAA.Regulated.EMT.Genes.Co, DMXAA.Regulated.EMT.Genes.Mono)
+```
+
+Expression plots with p values for relevant comparisons
+```{r}
+# Function to return gene statistics
+return_Gene_Stats <- function(sel_treat_group, sel_ctrl_group, sel_Gene, Means_FC_qvals) {
+  Gene_stats <- Means_FC_qvals %>% 
+    filter(treat_group %in% sel_treat_group)  %>% 
+    filter(ctrl_group %in% sel_ctrl_group)  %>% 
+    filter(Gene %in% sel_Gene) 
+
+  return(Gene_stats)
+}
+
+# Function to plot gene expression with p-values
+plot_expression_with_p_vals <- function(in_gene, dds_comp_1, dds_comp_2, Full_Sample_Meta_Compvar, in_Conditions, x_group, col_by="Run", Means_FC_qvals, comparisons) {
+  
+  # Extract and transform normalized counts for dds_comp_1
+  DNRC_comp_1 <- counts(dds_comp_1, normalized=TRUE) %>% 
+    as.data.frame() %>% 
+    rownames_to_column("Gene")
+  
+  # Apply log1p transformation
+  DNRC_comp_1 <- DNRC_comp_1 %>% 
+    mutate(across(-Gene, ~log1p(.)))
+  
+  DNRC_long_comp_1 <- DNRC_comp_1 %>% 
+    gather(key = Sample, value = DNRC, -Gene)
+  
+  Sample_md_Filtered_comp_1 <- Full_Sample_Meta_Compvar %>% 
+    filter(Condition %in% in_Conditions)  %>%
+    group_by(Run_Paired) %>%
+    filter(n() > 1) %>%  # Keep only rows where the pairing_batch has more than one occurrence
+    ungroup()
+  
+  DNRC_sample_md_comp_1 <- DNRC_long_comp_1 %>% 
+    left_join(Sample_md_Filtered_comp_1, by = "Sample") 
+  
+  # Extract and transform normalized counts for dds_comp_2
+  DNRC_comp_2 <- counts(dds_comp_2, normalized=TRUE) %>% 
+    as.data.frame() %>% 
+    rownames_to_column("Gene")
+  
+  # Apply log1p transformation
+  DNRC_comp_2 <- DNRC_comp_2 %>% 
+    mutate(across(-Gene, ~log1p(.)))
+
+  DNRC_long_comp_2 <- DNRC_comp_2 %>% 
+    gather(key = Sample, value = DNRC, -Gene)
+  
+  Sample_md_Filtered_comp_2 <- Full_Sample_Meta_Compvar %>% 
+    filter(Condition %in% in_Conditions)  %>%
+    group_by(Run_Paired) %>%
+    filter(n() > 1) %>%  # Keep only rows where the pairing_batch has more than one occurrence
+    ungroup()
+  
+  DNRC_sample_md_comp_2 <- DNRC_long_comp_2 %>% 
+    left_join(Sample_md_Filtered_comp_2, by = "Sample") 
+  
+  # Combine the two datasets
+  DNRC_sample_md <- rbind(DNRC_sample_md_comp_1, DNRC_sample_md_comp_2)
+  
+  # Filter for the selected gene
+  mygene_df <- DNRC_sample_md %>%
+    filter(Gene == in_gene) %>% 
+    filter(Condition %in% in_Conditions)
+  
+  mygene_df <- mygene_df %>%
+    mutate(Condition = factor(Condition, levels = in_Conditions))
+  
+  # Create the plot
+  p <- ggplot(mygene_df, aes_string(x = x_group, y = "DNRC", fill = col_by))  +
+    geom_boxplot(position = position_dodge(width = 0.8)) +
+    labs(y = "Log(normalized read count)") +
+    scale_fill_manual(values = c("gray80", "lightblue")) +  # Specify colors for treatments
+    theme_bw() + 
+    theme(axis.text.x = element_text(angle = 0, hjust = 1)) +
+    ggtitle(in_gene) +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    theme(legend.position = "none") 
+  
+  # Annotate p-values and draw bars on the plot
+  y_positions <- seq(max(mygene_df$DNRC, na.rm = TRUE) * 1.02, length.out = length(comparisons), by = max(mygene_df$DNRC, na.rm = TRUE) * 0.05)
+  for (i in seq_along(comparisons)) {
+    comparison <- comparisons[[i]]
+    treat_group <- comparison[[1]]
+    ctrl_group <- comparison[[2]]
+    
+    Gene_stats <- return_Gene_Stats(treat_group, ctrl_group, in_gene, Means_FC_qvals)
+    
+    Gene_stats <- Gene_stats %>%
+      mutate(significance = case_when(
+        padj > 0.05 ~ "ns",
+        padj <= 0.0001 ~ "****",
+        padj <= 0.001 ~ "***",
+        padj <= 0.01 ~ "**",
+        padj <= 0.05 ~ "*",
+        TRUE ~ ""
+      ))
+    
+    if (nrow(Gene_stats) > 0) {
+      Gene_stats <- Gene_stats %>% 
+        mutate(label = significance)
+      
+      x_coords <- match(c(treat_group, ctrl_group), levels(mygene_df[[x_group]]))
+      y_pos <- y_positions[i]
+      tick_length <- max(mygene_df$DNRC, na.rm = TRUE) * 0.03
+      
+      if (!any(is.na(x_coords))) {
+        # Draw the main horizontal bar
+        p <- p + annotate("segment", x = x_coords[1], xend = x_coords[2], y = y_pos, yend = y_pos, size = 0.5)
+        
+        # Draw the vertical ticks
+        p <- p + annotate("segment", x = x_coords[1], xend = x_coords[1], y = y_pos, yend = y_pos - tick_length, size = 0.5)
+        p <- p + annotate("segment", x = x_coords[2], xend = x_coords[2], y = y_pos, yend = y_pos - tick_length, size = 0.5)
+        
+        # Add the significance label
+        p <- p + annotate("text", x = mean(x_coords), y = y_pos + tick_length / 2, label = Gene_stats$label, size = 5, vjust = -1)
+      }
+    }
+  }
+  
+  # Adjust y-axis dynamically using coord_cartesian()
+  p <- p + coord_cartesian(ylim = c(min(mygene_df$DNRC) * 0.9, max(mygene_df$DNRC) * 1.1))
+  
+  return(p)
+}
+
+
+```
+
+# Figure 6Q
+```{r}
+comparisons <- list(c("DMXAA_Mono_T", "DMSO_Mono_T"),
+  c("DMXAA_Cocul_T", "DMSO_Cocul_T")
+)
+
+Fig_6Q_plot <- plot_expression_with_p_vals(
+  in_gene = "Spp1",
+  dds_comp_1 = dds_DMXAA_Cocul_T_vs_DMSO_Cocul_T,
+  dds_comp_2 = dds_DMXAA_Mono_T_vs_DMSO_Mono_T,
+  Full_Sample_Meta_Compvar = Sample_md_Compvar,
+  in_Conditions = c("DMSO_Mono_T", "DMXAA_Mono_T", "DMSO_Cocul_T", "DMXAA_Cocul_T"), 
+  x_group = "Condition", 
+  col_by = "Treatment", 
+  Means_FC_qvals = Means_FC_qvals_All_Comps, 
+  comparisons = comparisons
+)
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = Fig_6Q_plot, "Figure_6Q_Spp1_DMXAA.pdf", width = 7.25/2, height = 4, units = "in", path = "Figure_6/")
+```
+
+```{r}
+library(patchwork)
+
+# Wrapper function for multiple genes
+plot_multiple_genes <- function(genes, dds_comp_1, dds_comp_2, Full_Sample_Meta_Compvar, in_Conditions, x_group, col_by, Means_FC_qvals, comparisons, nrow = 2, ncol = 3) {
+  # Initialize a list to store individual gene plots
+  plot_list <- list()
+  
+  # Loop through each gene and create a plot
+  for (gene in genes) {
+    gene_plot <- plot_expression_with_p_vals(
+      in_gene = gene,
+      dds_comp_1 = dds_comp_1,
+      dds_comp_2 = dds_comp_2,
+      Full_Sample_Meta_Compvar = Full_Sample_Meta_Compvar,
+      in_Conditions = in_Conditions,
+      x_group = x_group,
+      col_by = col_by,
+      Means_FC_qvals = Means_FC_qvals,
+      comparisons = comparisons
+    )
+    
+    # Append to the plot list
+    plot_list[[gene]] <- gene_plot
+  }
+  
+  # Combine all gene plots using patchwork
+  combined_plot <- wrap_plots(plot_list, nrow = nrow, ncol = ncol, axes = "collect_x", "collect_y")
+  return(combined_plot)
+}
+```
+
+# Figure S11E
+```{r}
+comparisons <- list(c("DMXAA_Mono_T", "DMSO_Mono_T"),
+  c("DMXAA_Cocul_T", "DMSO_Cocul_T")
+)
+
+myplot <- plot_multiple_genes(
+  genes = DMXAA.Co.Specific.EMT.Genes,
+  dds_comp_1 = dds_DMXAA_Cocul_T_vs_DMSO_Cocul_T,
+  dds_comp_2 = dds_DMXAA_Mono_T_vs_DMSO_Mono_T,
+  Full_Sample_Meta_Compvar = Sample_md_Compvar,
+  in_Conditions = c("DMSO_Mono_T", "DMXAA_Mono_T", "DMSO_Cocul_T", "DMXAA_Cocul_T"), 
+  x_group = "Condition", 
+  col_by = "Treatment", 
+  Means_FC_qvals = Means_FC_qvals_All_Comps, 
+  comparisons = comparisons,
+  nrow = 4,
+  ncol = 4
+)
+
+if (!dir.exists("Figure_S11")) {dir.create("Figure_S11")}
+ggsave(plot = myplot, "Figure_S11E_EMT_DEGs_CoT_DMXAA.pdf", width = 15, height = 12, units = "in", path = "Figure_S11/")
+```
+
+```{r}
+myCAF.Z.Scores.H151.PSC <- export_zs(in_sign = Cocul.myCAF.Sig, dds = dds_H151_PSC, Full_Sample_Meta_Compvar = Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)
+
+ifCAF.Z.Scores.H151.PSC <- export_zs(in_sign = Cocul.ifCAF.Sig, dds = dds_H151_PSC, Full_Sample_Meta_Compvar = Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)
+```
+
+# Figure S11B
+```{r}
+comparisons <- list(c("H151_25_Mono_PSC", "DMSO_Mono_PSC"), c("H151_25_Cocul_PSC", "DMSO_Cocul_PSC"))
+x_order <- c("DMSO_Mono_PSC", "H151_25_Mono_PSC", "DMSO_Cocul_PSC", "H151_25_Cocul_PSC")
+pairing_var <- "Run_Paired"
+myplot <- plot_sign_Z_multiple(ifCAF.Z.Scores.H151.PSC, "Condition", comparisons, pairing_var, x_order, x_label = "Condition", y_label = "ifCAF Z-Score")
+
+if (!dir.exists("Figure_S11")) {dir.create("Figure_S11")}
+ggsave(plot = myplot, "Figure_S11B_ifCAF_Z_Score_H151.pdf", width = 7.25, height = 3.5, units = "in", path = "Figure_S11/")
+```
+
+# Figure S11C
+```{r}
+myplot <- plot_sign_Z_multiple(myCAF.Z.Scores.H151.PSC, "Condition", comparisons, pairing_var, x_order, x_label = "Condition", y_label = "myCAF Z-Score")
+
+if (!dir.exists("Figure_S11")) {dir.create("Figure_S11")}
+ggsave(plot = myplot, "Figure_S11C_myCAF_Z_Score_H151.pdf", width = 7.25, height = 3.5, units = "in", path = "Figure_S11/")
+```
+
+```{r}
+EMT.Z.Scores.H151.Tumour <- export_zs(in_sign = HALLMARK_EMT,  dds = dds_H151_T, Full_Sample_Meta_Compvar = Sample_md_Compvar_Paired_Runs_H151_25_DMXAA)
+```
+
+# Figure S11D
+```{r}
+comparisons <- list(c("H151_25_Mono_T", "DMSO_Mono_T"), c("H151_25_Cocul_T", "DMSO_Cocul_T"))
+x_order <- c("DMSO_Mono_T", "H151_25_Mono_T", "DMSO_Cocul_T", "H151_25_Cocul_T")
+pairing_var <- "Run_Paired"
+# Generate plot
+myplot <- plot_sign_Z_multiple(EMT.Z.Scores.H151.Tumour, "Condition", comparisons, pairing_var, x_order, x_label = "Condition", y_label = "HALLMARK EMT Z-Score")
+
+if (!dir.exists("Figure_S11")) {dir.create("Figure_S11")}
+ggsave(plot = myplot, "Figure_S11D_HALLMARK_EMT_Z_Score_H151.pdf", width = 7.25, height = 3.5, units = "in", path = "Figure_S11/")
+```
+
+
+# Gemcitabine DMXAA synergy
+Code used to generate Figure S11A 
+```{r}
+library(readxl)
+
+Gem_synergy_df<-read_xlsx("Gem_synergy_GFP.xlsx",sheet = "GFP") %>% 
+  pivot_longer(cols = -c("Replicate", "Day", "Sample"), names_to = "Treatment", values_to = "GFP_covered_area") 
+
+Gem_synergy_Sample_md<-read_xlsx("Gem_synergy_GFP.xlsx", sheet = "Sample_md")
+```
+
+A dataframe is compiled for plotting. 
+The MG signal is substracted from all other wells. 
+```{r}
+mean_MG_df<-Gem_synergy_df %>% 
+  left_join(Gem_synergy_Sample_md, by = "Sample") %>% 
+  group_by(Replicate, Day, Treatment) %>%
+  filter(Condition=="MG") %>% 
+  summarise(mean_MG=mean(GFP_covered_area))
+
+Plot_df1<-Gem_synergy_df %>% 
+  left_join(mean_MG_df, by = c("Replicate", "Day", "Treatment")) %>% 
+  mutate(GFP_covered_area=GFP_covered_area-mean_MG) %>% 
+  mutate(GFP_covered_area=ifelse(GFP_covered_area<0, 0, GFP_covered_area)) %>% 
+  left_join(Gem_synergy_Sample_md, by = "Sample") %>% 
+  filter(Condition %in% c("mT3", "mT4", "Co-mT3", "Co-mT4"))
+
+mT3_df1<-Plot_df1 %>% 
+  filter(Treatment %in% c("Vehicle", "5nM_GEM", "DMXAA", "DMXAA+5nM_GEM")) %>%
+  filter(Condition %in% "mT3") %>% 
+  select(Replicate, Day, Treatment, GFP_covered_area, Condition)
+
+Co.mT3_df1<-Plot_df1 %>% 
+  filter(Treatment %in% c("Vehicle", "5nM_GEM", "DMXAA", "DMXAA+5nM_GEM")) %>%
+  filter(Condition %in% "Co-mT3") %>% 
+  select(Replicate, Day, Treatment, GFP_covered_area, Condition)
+
+mT4_df1<-Plot_df1 %>% 
+  filter(Treatment %in% c("Vehicle", "5nM_GEM", "DMXAA", "DMXAA+5nM_GEM")) %>%
+  filter(Condition %in% "mT4") %>% 
+  select(Replicate, Day, Treatment, GFP_covered_area, Condition)
+
+Co.mT4_df1<-Plot_df1 %>% 
+  filter(Treatment %in% c("Vehicle", "5nM_GEM", "DMXAA", "DMXAA+5nM_GEM")) %>%
+  filter(Condition %in% "Co-mT4") %>% 
+  select(Replicate, Day, Treatment, GFP_covered_area, Condition)
+```
+
+```{r}
+mT3_df1_mean <- mT3_df1 %>%
+  group_by(Replicate, Day, Treatment) %>%
+  summarize(mean_GFP_covered_area = mean(GFP_covered_area), .groups = "drop")
+
+# Combine 'Treatment' and 'Replicate' into a single column 'Treatment_Replicate'
+mT3_df1_mean_wide <- mT3_df1_mean %>%
+  mutate(Treatment_Replicate = paste(Treatment, Replicate, sep = "_")) %>%
+  select(-Treatment, -Replicate) %>%  # Remove the old Treatment and Replicate columns
+  pivot_wider(names_from = Treatment_Replicate, values_from = mean_GFP_covered_area)
+
+# Reorder the columns: Vehicle, Gem (5nM_GEM), DMXAA, Gem (5nM_GEM), DMXAA, then Replicates (R1, R2, R3)
+col_order <- c(
+  "Day",
+  "Vehicle_R1", "Vehicle_R2", "Vehicle_R3", 
+  "5nM_GEM_R1", "5nM_GEM_R2", "5nM_GEM_R3", 
+  "DMXAA_R1", "DMXAA_R2", "DMXAA_R3",
+  "DMXAA+5nM_GEM_R1", "DMXAA+5nM_GEM_R2", "DMXAA+5nM_GEM_R3"
+)
+
+# Apply the custom column order
+mT3_df1_mean_wide <- mT3_df1_mean_wide %>%
+  select(all_of(col_order))
+
+#write.table(mT3_df1_mean_wide, "../Date/mT3_df1_mean_wide.txt", sep = "\t")
+
+Co.mT3_df1_mean <- Co.mT3_df1 %>%
+  group_by(Replicate, Day, Treatment) %>%
+  summarize(mean_GFP_covered_area = mean(GFP_covered_area), .groups = "drop")
+
+# Combine 'Treatment' and 'Replicate' into a single column 'Treatment_Replicate'
+Co.mT3_df1_mean_wide <- Co.mT3_df1_mean %>%
+  mutate(Treatment_Replicate = paste(Treatment, Replicate, sep = "_")) %>%
+  select(-Treatment, -Replicate) %>%  # Remove the old Treatment and Replicate columns
+  pivot_wider(names_from = Treatment_Replicate, values_from = mean_GFP_covered_area)
+
+# Reorder the columns: Vehicle, Gem (5nM_GEM), DMXAA, Gem (5nM_GEM), DMXAA, then Replicates (R1, R2, R3)
+col_order <- c(
+  "Day",
+  "Vehicle_R1", "Vehicle_R2", "Vehicle_R3", 
+  "5nM_GEM_R1", "5nM_GEM_R2", "5nM_GEM_R3", 
+  "DMXAA_R1", "DMXAA_R2", "DMXAA_R3",
+  "DMXAA+5nM_GEM_R1", "DMXAA+5nM_GEM_R2", "DMXAA+5nM_GEM_R3"
+)
+
+# Apply the custom column order
+Co.mT3_df1_mean_wide <- Co.mT3_df1_mean_wide %>%
+  select(all_of(col_order))
+
+#write.table(Co.mT3_df1_mean_wide, "../Date/Co.mT3_df1_mean_wide.txt", sep = "\t")
+
+mT4_df1_mean <- mT4_df1 %>%
+  group_by(Replicate, Day, Treatment) %>%
+  summarize(mean_GFP_covered_area = mean(GFP_covered_area), .groups = "drop")
+
+# Combine 'Treatment' and 'Replicate' into a single column 'Treatment_Replicate'
+mT4_df1_mean_wide <- mT4_df1_mean %>%
+  mutate(Treatment_Replicate = paste(Treatment, Replicate, sep = "_")) %>%
+  select(-Treatment, -Replicate) %>%  # Remove the old Treatment and Replicate columns
+  pivot_wider(names_from = Treatment_Replicate, values_from = mean_GFP_covered_area)
+
+# Reorder the columns: Vehicle, Gem (5nM_GEM), DMXAA, Gem (5nM_GEM), DMXAA, then Replicates (R1, R2, R3)
+col_order <- c(
+  "Day",
+  "Vehicle_R1", "Vehicle_R2", "Vehicle_R3", 
+  "5nM_GEM_R1", "5nM_GEM_R2", "5nM_GEM_R3", 
+  "DMXAA_R1", "DMXAA_R2", "DMXAA_R3",
+  "DMXAA+5nM_GEM_R1", "DMXAA+5nM_GEM_R2", "DMXAA+5nM_GEM_R3"
+)
+
+# Apply the custom column order
+mT4_df1_mean_wide <- mT4_df1_mean_wide %>%
+  select(all_of(col_order))
+
+#write.table(mT4_df1_mean_wide, "../Date/mT4_df1_mean_wide.txt", sep = "\t")
+
+Co.mT4_df1_mean <- Co.mT4_df1 %>%
+  group_by(Replicate, Day, Treatment) %>%
+  summarize(mean_GFP_covered_area = mean(GFP_covered_area), .groups = "drop")
+
+# Combine 'Treatment' and 'Replicate' into a single column 'Treatment_Replicate'
+Co.mT4_df1_mean_wide <- Co.mT4_df1_mean %>%
+  mutate(Treatment_Replicate = paste(Treatment, Replicate, sep = "_")) %>%
+  select(-Treatment, -Replicate) %>%  # Remove the old Treatment and Replicate columns
+  pivot_wider(names_from = Treatment_Replicate, values_from = mean_GFP_covered_area)
+
+# Reorder the columns: Vehicle, Gem (5nM_GEM), DMXAA, Gem (5nM_GEM), DMXAA, then Replicates (R1, R2, R3)
+col_order <- c(
+  "Day",
+  "Vehicle_R1", "Vehicle_R2", "Vehicle_R3", 
+  "5nM_GEM_R1", "5nM_GEM_R2", "5nM_GEM_R3", 
+  "DMXAA_R1", "DMXAA_R2", "DMXAA_R3",
+  "DMXAA+5nM_GEM_R1", "DMXAA+5nM_GEM_R2", "DMXAA+5nM_GEM_R3"
+)
+
+# Apply the custom column order
+Co.mT4_df1_mean_wide <- Co.mT4_df1_mean_wide %>%
+  select(all_of(col_order))
+
+#write.table(Co.mT4_df1_mean_wide, "../Date/Co.mT4_df1_mean_wide.txt", sep = "\t")
+```
+
+
+# Differentially expressed genes
+A function to plot DEGs between mono and co culture
+```{r}
+plot_DEGs_Mono_v_Co <- function(mono_treat_group, mono_ctrl_group, co_treat_group, co_ctrl_group, Means_FC_qvals) {
+library(tidyverse)
+Mono_T<- Means_FC_qvals %>% 
+  filter(treat_group %in% mono_treat_group)  %>% 
+  filter(ctrl_group %in% mono_ctrl_group)  %>% 
+  select(c(Gene, FC, padj, ctrl_mean_DNRC, treat_mean_DNRC)) %>% 
+  dplyr::rename(FC.Mono = FC) %>% 
+  dplyr::rename(padj.Mono = padj)%>% 
+  dplyr::rename(ctrl_mean_DNRC.Mono = ctrl_mean_DNRC) %>% 
+  dplyr::rename(treat_mean_DNRC.Mono = treat_mean_DNRC) 
+
+Co_T<- Means_FC_qvals %>% 
+  filter(treat_group %in% co_treat_group)  %>% 
+  filter(ctrl_group %in% co_ctrl_group)  %>% 
+  select(c(Gene, FC, padj, ctrl_mean_DNRC, treat_mean_DNRC))%>% 
+  dplyr::rename(FC.Co = FC) %>% 
+  dplyr::rename(padj.Co = padj)%>% 
+  dplyr::rename(ctrl_mean_DNRC.Co = ctrl_mean_DNRC) %>% 
+  dplyr::rename(treat_mean_DNRC.Co = treat_mean_DNRC)  
+
+Mono_Co_T <- Mono_T  %>% 
+  left_join(Co_T, by = "Gene")
+
+Mono_Co_T <- Mono_Co_T  %>% 
+  mutate(FC.Mono = FC.Mono+0.01) %>%
+  mutate(logFC.Mono=log(FC.Mono)) %>% 
+  mutate(FC.Co = FC.Co+0.01) %>%
+  mutate(logFC.Co=log(FC.Co))  %>%
+  filter(padj.Co <0.05 | padj.Mono <0.05) %>%
+  filter((logFC.Co >0.405 | logFC.Co <(-0.405) & padj.Co <0.05) | (logFC.Mono >0.405 | logFC.Mono <(-0.405) & padj.Mono <0.05)) %>%
+  #filter(ctrl_mean_DNRC.Co >20 | treat_mean_DNRC.Co >20 | ctrl_mean_DNRC.Mono >20 | treat_mean_DNRC.Mono >20) %>%
+  mutate("Differential Gene Expression" = ifelse((logFC.Co >0.405 & logFC.Co > 2*logFC.Mono) | (logFC.Co <(-0.405) & logFC.Co < 2*logFC.Mono), "CAF Enhanced", ifelse((logFC.Mono >0.405 & logFC.Mono > 2*logFC.Co)| (logFC.Mono <(-0.405) & logFC.Mono < 2*logFC.Co), "CAF Suppressed", "CAF Independent")))  %>%
+  na.omit()
+
+library(ggrepel)
+library(ggplot2)
+library(scales)
+
+square_size <- 1.39  # Change this to the desired size
+
+  p <-ggplot(Mono_Co_T, aes(x=logFC.Mono, y=logFC.Co, color = Mono_Co_T$`Differential Gene Expression`)) + 
+  geom_point() +scale_color_discrete(name="") +
+  theme_bw() + # Select theme with a white background  
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5)) + 
+  theme(legend.title = element_blank()) 
+  
+  p + scale_color_manual(values = c("goldenrod", "cornflowerblue", "darkred"))
+
+}
+
+```
+
+```{r}
+plot_DEGs_Mono_v_Co("DMXAA_Mono_T", "DMSO_Mono_T", "DMXAA_Cocul_T", "DMSO_Cocul_T", Means_FC_qvals_DMXAA)
+```
+
+
+A function to return CAF mediated DEGs
+```{r}
+return_DEGs_CAF_regulated <- function(mono_treat_group, mono_ctrl_group, co_treat_group, co_ctrl_group, Means_FC_qvals) {
+library(tidyverse)
+Mono_T<- Means_FC_qvals %>% 
+  filter(treat_group %in% mono_treat_group)  %>% 
+  filter(ctrl_group %in% mono_ctrl_group)  %>% 
+  dplyr::select(c(Gene, FC, padj, ctrl_mean_DNRC, treat_mean_DNRC)) %>% 
+  dplyr::rename(FC.Mono = FC) %>% 
+  dplyr::rename(padj.Mono = padj)%>% 
+  dplyr::rename(ctrl_mean_DNRC.Mono = ctrl_mean_DNRC) %>% 
+  dplyr::rename(treat_mean_DNRC.Mono = treat_mean_DNRC) 
+Co_T<- Means_FC_qvals %>% 
+  filter(treat_group %in% co_treat_group)  %>% 
+  filter(ctrl_group %in% co_ctrl_group)  %>%
+  dplyr::select(c(Gene, FC, padj, ctrl_mean_DNRC, treat_mean_DNRC))%>% 
+  dplyr::rename(FC.Co = FC) %>% 
+  dplyr::rename(padj.Co = padj)%>% 
+  dplyr::rename(ctrl_mean_DNRC.Co = ctrl_mean_DNRC) %>% 
+  dplyr::rename(treat_mean_DNRC.Co = treat_mean_DNRC)  
+
+Mono_Co_T <- Mono_T  %>% 
+  left_join(Co_T, by = "Gene")
+
+Mono_Co_T <- Mono_Co_T  %>% 
+  mutate(FC.Mono = FC.Mono+0.01) %>%
+  mutate(logFC.Mono=log(FC.Mono)) %>% 
+  mutate(FC.Co = FC.Co+0.01) %>%
+  mutate(logFC.Co=log(FC.Co))  %>%
+  #filter(padj.Co <0.05 | padj.Mono <0.05) %>%
+  filter((logFC.Co >0.696 | logFC.Co <(-0.696) & padj.Co <0.05) | (logFC.Mono >0.696 | logFC.Mono <(-0.696) & padj.Mono <0.05)) %>%
+  filter(ctrl_mean_DNRC.Co >20 | treat_mean_DNRC.Co >20 | ctrl_mean_DNRC.Mono >20 | treat_mean_DNRC.Mono >20) %>%
+  mutate("Differential_Gene_Expression" = ifelse((logFC.Co >0.695 & logFC.Co > 2*logFC.Mono) | (logFC.Co <(-0.695) & logFC.Co < 2*logFC.Mono), "CAF Enhanced", ifelse((logFC.Mono >0.695 & logFC.Mono > 2*logFC.Co)| (logFC.Mono <(-0.695) & logFC.Mono < 2*logFC.Co), "CAF Suppressed", "CAF Independent")))  %>%
+  na.omit()
+
+Cocul_specific_Sig_Genes <-Mono_Co_T %>% 
+    filter(Differential_Gene_Expression %in% c("CAF Enhanced", "CAF Suppressed")) %>%
+    column_to_rownames("Gene") %>%
+    dplyr::select(c(logFC.Co, Differential_Gene_Expression)) %>%
+    dplyr::rename(logFC = logFC.Co) 
+
+return(Cocul_specific_Sig_Genes)
+}
+```
+
+```{r}
+DMXAA_CAF_Regulated_DEGs <- return_DEGs_CAF_regulated("DMXAA_Mono_T", "DMSO_Mono_T", "DMXAA_Cocul_T", "DMSO_Cocul_T", Means_FC_qvals_DMXAA)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

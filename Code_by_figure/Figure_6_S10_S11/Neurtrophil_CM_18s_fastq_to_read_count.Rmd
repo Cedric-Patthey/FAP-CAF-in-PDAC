@@ -1,0 +1,87 @@
+---
+title: "Nphi_CM_18s_fastq_to_count"
+author: "Cedric"
+date: "2024-06-20"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# synopsis
+The following code processes the Nextseq data generated 20 june 2024 including 18 samples of neutrophil cultures treated with ifCAF conditioned medium. The files are processed from fastq to raw read count (RRC). The reference genome used is GRCm39 Ensembl annotation release 109. The raw fastq files as well as the output read count file are available on ArrayExpress with accession number E-MTAB-14934.  
+
+The code was run on the server Rackham on Uppmax made available by the National Academic Infrastructure for Supercomputing in Sweden (NAISS). It must therefore be adapted to the user's environement to reproduce the same output. 
+
+# read count pipeline
+The fastq files are processed to calculate raw read count using the pipeline SS2_SE_FASTQ2RRC made 10jun2024 and described in the R markdown `SS2_SE_FASTQ2RRC.Rmd`
+
+The reference files (given in the parameter file) are as follows:
+mappable genome directory `Musmu_STAR_mappable_genome_CP_27Mar2024`
+`Musmu_GRCm39.109_protcod_fd.bed` made 26 Feb 2024; 
+`Musmu_GRCm39.109_protcod_fd_ExonIntron.bed` made 26 Feb 2024;
+`Musmu_GRCm39.109_protcod_fd.gtf` made 26 Feb 2024; 
+`Musmu_GRCm39.109_protcod_fd_posinfo_table.txt` made 26 Feb 2024;
+`Musmu_rRNA.fas` corresponding to 5S rRNA accession NR_030686.1 and 45S rRNA accession NR_030686.1
+The code used to prepare these files is described in the R markdown `Musmu_GRCm39_Ens109_26Feb2024.Rmd`
+
+The parameters file is set up manually as a csv file. Some of the parameters correspond to the reference files above or the mappable genome. They must be given with correct path (just the file name if the file is in the same directory where the script fastq2RRC.sh is launched)
+```{r}
+library(tidyverse)
+
+param<-tibble(Parameter=c("mappable_genome", "rRNA_fasta", "annotation_gtf", "annotation_bed", "intronic_bed", "cDNA_position_key", "genic_cap", "tp_bias_max_length", "tp_bias_sample_size", "symplicity_q_cutoff", "symplicity_FC_cutoff"), Value=c("~/Mouse_Genome_GRCm39.109/Musmu_STAR_mappable_genome_CP_27Mar2024/", "Musmu_rRNA.fas", "~/Mouse_Genome_GRCm39.109/Musmu_GRCm39.109_protcod_fd.gtf", "~/Mouse_Genome_GRCm39.109/Musmu_GRCm39.109_protcod_fd.bed", "~/Mouse_Genome_GRCm39.109/Musmu_GRCm39.109_protcod_fd_ExonIntron.bed", "~/Mouse_Genome_GRCm39.109/Musmu_GRCm39.109_protcod_fd_posinfo_table.txt", 8000000, 100, 1000, 0.0001, 1.5))
+
+write.table(param, "Nphi_CM_18s_parameters_17jun2024.csv", sep=",", col.names = T, row.names = F, quote = F)
+```
+
+The main script fastq2RRC.sh is used. 
+```{bash}
+i=1
+while [ $i -le 18 ]
+do
+  sbatch fastq2RRC.sh n${i} CPline_parameters_21jun2024.csv fastq_to_RRC_scripts/
+  i=$((i+1))
+done
+```
+
+
+# merging of read counts and stats
+The mapping statistics are merged
+```{bash}
+cat n1_fastq_bam_genic_count.txt | awk 'NR==1' > Nphi_CM_18s_fastq_bam_genic_count.txt
+i=1
+while [ $i -le 18 ]
+do
+  cat n${i}_fastq_bam_genic_count.txt | awk 'NR==2' >> Nphi_CM_18s_fastq_bam_genic_count.txt
+  i=$((i+1))
+done &
+
+```
+
+The RRC are merged
+```{bash}
+# creates the output file and puts the gene and ID headlines
+echo Sample$'\t'EnsID$'\t'Gene$'\t'RRC > Nphi_CM_18s_HT_counts_17jun2024.txt
+
+# loops through the files and pastes the count with filename as header
+i=1
+while [ $i -le 18 ]
+do
+  cat n${i}_ht_count.txt | grep -v '__' >> Nphi_CM_18s_HT_counts_17jun2024.txt
+  i=$((i+1))
+done &
+
+```
+
+The 3'bias stats are merged
+```{bash}
+cat n1_cDNA_pos_df | awk 'NR==1' > Nphi_cocul_18s_cDNA_pos_df.txt
+i=1
+while [ $i -le 18 ]
+do
+  cat n${i}_cDNA_pos_df | awk 'NR!=1' >> Nphi_cocul_18s_cDNA_pos_df.txt
+  i=$((i+1))
+done &
+
+```

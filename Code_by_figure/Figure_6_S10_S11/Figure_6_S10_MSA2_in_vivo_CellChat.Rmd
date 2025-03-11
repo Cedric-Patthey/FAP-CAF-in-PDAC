@@ -1,0 +1,899 @@
+---
+title: "CellChat"
+author: "Joshua"
+date: "2024-05-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Summary
+The following code describes the analysis of single cell RNAseq data from in vivo MSA2 treatments of tumour bearing mice. This code was used to produce figures 6 of Cumming et al, 2025. 
+
+The input data is an integrated Seurat object for 12 samples of 10x single-cell data called `Ortho.Tumors.MSA2.integrated.RDS`, available on ArrayExpress with accession number E-MTAB-14940. The code for the generation of the Seurat object can be found in R markdown `Figure_5_S9_data_analysis.rmd` related to Figure 5. The raw fastq files are available on ArrayExpress.  The raw UMI count tables are available on ArrayExpress.
+
+In this analysis cell-cell communication is investigated with CellChat and NicheNet
+
+# Dependencies
+```{r}
+library(CellChat)  # version 2.1.2
+library(tidyverse)
+library(Seurat)  # version 4.1.0
+library(pheatmap)  # version 1.0.12
+library(nichenetr)  # version 2.2.0
+library(SeuratObject)
+library(ggpubr)
+library(cowplot)
+library(gridExtra)
+
+library(clusterProfiler)  # version 4.2.2
+library(org.Mm.eg.db)
+library(ReactomePA)
+library(msigdbr)  # version 7.5.1
+```
+
+
+The seurat object with integrated single cell data from Figure 5 is loaded.
+```{r}
+Ortho.Tumors.MSA2.integrated <- readRDS("Ortho.Tumors.MSA2.integrated.RDS")
+```
+
+The MSA-2 and control samples are separated into distinct Seurat objects
+```{r}
+Idents(object = Ortho.Tumors.MSA2.integrated) <- "Treatment"
+
+Ortho.Tumors.MSA2 <- subset(Ortho.Tumors.MSA2.integrated, idents = "MSA-2")
+Ortho.Tumors.Ctrl <- subset(Ortho.Tumors.MSA2.integrated, idents = "Ctrl")
+```
+
+# CellChat
+CellChat is run to predict interactions between cell types
+```{r}
+cellchat.MSA <- createCellChat(object = Ortho.Tumors.MSA2, group.by = "Cell_Type_Level_2", assay = "RNA")
+
+cellchat.Ctrl <- createCellChat(object = Ortho.Tumors.Ctrl, group.by = "Cell_Type_Level_2", assay = "RNA")
+```
+
+```{r}
+CellChatDB <- CellChatDB.mouse
+```
+
+```{r}
+cellchat.MSA@DB <- CellChatDB
+cellchat.Ctrl@DB <- CellChatDB
+```
+
+```{r}
+cellchat.MSA <- subsetData(cellchat.MSA)
+cellchat.Ctrl <- subsetData(cellchat.Ctrl)
+```
+
+```{r}
+cellchat.MSA <- identifyOverExpressedGenes(cellchat.MSA)
+cellchat.MSA <- identifyOverExpressedInteractions(cellchat.MSA)
+cellchat.MSA <- projectData(cellchat.MSA, PPI.mouse) 
+# cellchat.MSA <- smoothData(cellchat.MSA, adj = PPI.mouse) # instead of projectData in later versions
+
+cellchat.MSA <- computeCommunProb(cellchat.MSA, raw.use = TRUE)
+
+# Filter out the cell-cell communication if there are only few number of cells in certain cell groups
+cellchat.MSA <- filterCommunication(cellchat.MSA, min.cells = 10)
+
+cellchat.MSA <- computeCommunProbPathway(cellchat.MSA)
+
+cellchat.MSA <- aggregateNet(cellchat.MSA)
+```
+
+```{r}
+cellchat.Ctrl <- identifyOverExpressedGenes(cellchat.Ctrl)
+cellchat.Ctrl <- identifyOverExpressedInteractions(cellchat.Ctrl)
+cellchat.Ctrl <- projectData(cellchat.Ctrl, PPI.mouse)
+# cellchat.Ctrl <- smoothData(cellchat.Ctrl, adj = PPI.mouse) # instead of projectData in later versions
+
+cellchat.Ctrl <- computeCommunProb(cellchat.Ctrl, raw.use = TRUE)
+
+# Filter out the cell-cell communication if there are only few number of cells in certain cell groups
+cellchat.Ctrl <- filterCommunication(cellchat.Ctrl, min.cells = 10)
+
+cellchat.Ctrl <- computeCommunProbPathway(cellchat.Ctrl)
+
+cellchat.Ctrl <- aggregateNet(cellchat.Ctrl)
+```
+
+```{r}
+# saveRDS(cellchat.MSA, "cellchat.MSA.RDS")
+# saveRDS(cellchat.Ctrl, "cellchat.Ctrl.RDS")
+
+# cellchat.MSA<-readRDS("cellchat.MSA.RDS")
+# cellchat.Ctrl<-readRDS("cellchat.Ctrl.RDS")
+
+```
+
+```{r}
+MSA.2.Weight.mat <- cellchat.MSA@net$weight
+
+Ctrl.2.Weight.mat <- cellchat.Ctrl@net$weight
+```
+
+```{r}
+groupSize <- as.numeric(table(cellchat.MSA@idents))
+```
+
+```{r}
+MSA2.net <- subsetCommunication(cellchat.MSA)
+Ctrl.net <- subsetCommunication(cellchat.Ctrl)
+
+MSA2.netP <- subsetCommunication(cellchat.MSA, slot.name = "netP")
+Ctrl.netP <- subsetCommunication(cellchat.Ctrl, slot.name = "netP")
+```
+
+
+# Differences in communication between MSA2 and control tumors
+```{r}
+MSA2.net.total <- MSA2.net %>%
+  group_by(source, target) %>%
+  summarise(prob.total.MSA2 = sum(prob))
+
+Ctrl.net.total <- Ctrl.net %>%
+  group_by(source, target) %>%
+  summarise(prob.total.Ctrl = sum(prob))
+
+net.total <- MSA2.net.total %>%
+  left_join(Ctrl.net.total, by = c("source", "target")) %>%
+  mutate(delta.prob = prob.total.MSA2 - prob.total.Ctrl) %>%
+  dplyr::select(-c(prob.total.MSA2, prob.total.Ctrl))
+
+MSA2.netP.total <- MSA2.netP %>%
+  group_by(source, target) %>%
+  summarise(prob.total.MSA2 = sum(prob))
+
+Ctrl.netP.total <- Ctrl.netP %>%
+  group_by(source, target) %>%
+  summarise(prob.total.Ctrl = sum(prob))
+
+netP.total <- MSA2.netP.total %>%
+  left_join(Ctrl.netP.total, by = c("source", "target")) %>%
+  mutate(delta.prob = prob.total.MSA2 - prob.total.Ctrl) %>%
+  dplyr::select(-c(prob.total.MSA2, prob.total.Ctrl))
+```
+
+```{r}
+MSA2.netP.total.CAFs <- MSA2.netP.total %>%
+  filter(source %in% "CAFs")
+```
+
+# Figure 6A
+Communication delta are plotted
+```{r}
+MSA2.netP.total <- MSA2.netP.total %>%
+  dplyr::mutate(Treatment = "MSA-2") %>%
+  dplyr::rename("prob.total" = "prob.total.MSA2")
+
+Ctrl.netP.total <- Ctrl.netP.total %>%
+  dplyr::mutate(Treatment = "Ctrl") %>%
+  dplyr::rename("prob.total" = "prob.total.Ctrl")
+
+MSA2.Ctrl.netP.total <- rbind(MSA2.netP.total, Ctrl.netP.total) 
+
+Fig_6A_plot <- ggplot(MSA2.Ctrl.netP.total, aes(x = source, y = prob.total, fill = source)) +
+  geom_boxplot() +
+  labs(x = "Sender Cell Types", y = "Communication Weight", title = "") +
+  facet_wrap(~ Treatment, nrow = 2, scales = "free_y") +  # Facet wrap by source variable in 2 rows
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 12),
+        legend.position = "none",
+        axis.title = element_text(size = 14),
+        axis.text.y = element_text(size = 12),
+        strip.text = element_text(size = 14, face = "bold"),  # Adjust size and color of facet titles
+        strip.background = element_rect(fill = "white"))
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = Fig_6A_plot, "Figure_6A_Communication_Weight_MSA2_vs_Ctrl.pdf", width = 4, height = 5, units = "in", path = "Figure_6/")
+```
+
+```{r}
+test_results_communication_weights <- MSA2.Ctrl.netP.total %>%
+  group_by(source) %>%
+  summarise(p_value = wilcox.test(prob.total ~ Treatment)$p.value)
+```
+
+
+```{r}
+all_combinations <- expand.grid(
+  source = unique(cellchat.MSA@idents),
+  target = unique(cellchat.MSA@idents)
+)
+
+# Set aupr_corrected_sum to 0.01 for all combinations
+all_combinations$delta.prob <- 0.00
+
+# Remove rows where Sender.to.receiver is already present in Cumulative_Ligand_Activities
+missing_combinations <- anti_join(all_combinations, netP.total, by = c("source", "target"))
+
+netP.total <- rbind(netP.total, missing_combinations)
+
+netP.total$delta.prob <- ifelse(is.na(netP.total$delta.prob), 0, netP.total$delta.prob)
+```
+
+#Figure 6B
+```{r}
+heatmap_matrix <- spread(netP.total, target, delta.prob) %>%
+  column_to_rownames("source") %>%
+  as.matrix()
+
+min_val <- min(heatmap_matrix)
+max_val <- max(heatmap_matrix)
+midpoint <- 0
+max_abs <- max(abs(min_val), abs(max_val))
+breaks <- c(seq(min_val, -midpoint, length.out = 101), seq(midpoint, max_val, length.out = 101))
+breaks <- unique(breaks)
+
+my_palette <- colorRampPalette(c("blue", "white", "red"))(length(breaks) - 1)
+
+Fig_6B_plot <- pheatmap(heatmap_matrix,
+         cluster_rows = TRUE,
+         cluster_cols = TRUE,
+         main = "",
+         color = my_palette,
+         breaks = breaks)
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = Fig_6B_plot, "Figure_6B_Communication_Weight_MSA2_vs_Ctrl_Heatmap.pdf", width = 5, height = 5, units = "in", path = "Figure_6/")
+```
+
+# NicheNet
+```{r}
+options(timeout = 6000)
+organism = "mouse"
+
+if(organism == "human"){
+  lr_network = readRDS(url("https://zenodo.org/record/7074291/files/lr_network_human_21122021.rds"))
+  ligand_target_matrix = readRDS(url("https://zenodo.org/record/7074291/files/ligand_target_matrix_nsga2r_final.rds"))
+} else if(organism == "mouse"){
+  lr_network = readRDS(url("https://zenodo.org/record/7074291/files/lr_network_mouse_21122021.rds"))
+  ligand_target_matrix = readRDS(url("https://zenodo.org/record/7074291/files/ligand_target_matrix_nsga2r_final_mouse.rds"))
+
+}
+
+lr_network = lr_network %>% distinct(from, to)
+head(lr_network)
+
+ligand_target_matrix[1:5,1:5] 
+
+if(organism == "human"){
+  weighted_networks = readRDS(url("https://zenodo.org/record/7074291/files/weighted_networks_nsga2r_final.rds"))
+} else if(organism == "mouse"){
+  weighted_networks = readRDS(url("https://zenodo.org/record/7074291/files/weighted_networks_nsga2r_final_mouse.rds"))
+
+}
+
+weighted_networks_lr = weighted_networks$lr_sig %>% inner_join(lr_network, by = c("from","to"))
+head(weighted_networks$lr_sig) # interactions and their weights in the ligand-receptor + signaling network
+head(weighted_networks$gr) # interactions and their weights in the gene regulatory network
+```
+
+
+# Ligands and activities for all combinations
+The ligand activities are calculated for all two by two combinations of cell populations in ctrl and MSA-2 treated conditions
+```{r}
+Ortho.Tumors.MSA2.integrated <- readRDS("Ortho.Tumors.MSA2.integrated.RDS")
+```
+
+```{r}
+# Assign Cell_Type_Level_2 to identities
+Ortho.Tumors.MSA2.integrated <- SetIdent(Ortho.Tumors.MSA2.integrated, value = Ortho.Tumors.MSA2.integrated@meta.data$Cell_Type_Level_2)
+
+# Define cell type names
+cell_types <- unique(Ortho.Tumors.MSA2.integrated@meta.data$Cell_Type_Level_2)
+
+# Custom function to get expressed genes
+custom_get_expressed_genes <- function(cell_type, assay_type, pct = 0.10) {
+  expressed_genes <- get_expressed_genes(cell_type, Ortho.Tumors.MSA2.integrated, pct = pct, assay_oi = assay_type)
+  background_expressed_genes <- expressed_genes %>% .[. %in% rownames(ligand_target_matrix)]
+  assign(paste0("expressed_genes_", cell_type), expressed_genes, envir = .GlobalEnv)
+  assign(paste0("background_expressed_genes_", cell_type), background_expressed_genes, envir = .GlobalEnv)
+}
+
+# Function to get DEGs
+get_DEGs <- function(cell_type, assay_type) {
+  DEGs <- FindMarkers(subset(Ortho.Tumors.MSA2.integrated, idents = cell_type),
+                      ident.1 = "MSA-2", ident.2 = "Ctrl", group.by = "Treatment", assay = assay_type, min.pct = 0.25)
+  DEGs_Up <- DEGs %>% filter(avg_log2FC > 0 & p_val_adj <= 0.05) %>% rownames()
+  DEGs_Down <- DEGs %>% filter(avg_log2FC < 0 & p_val_adj <= 0.05) %>% rownames()
+  assign(paste0(cell_type, "_DEGs_Up"), DEGs_Up, envir = .GlobalEnv)
+  assign(paste0(cell_type, "_DEGs_Down"), DEGs_Down, envir = .GlobalEnv)
+}
+
+# Get expressed genes and DEGs for each cell type
+for (cell_type in cell_types) {
+  custom_get_expressed_genes(cell_type, "RNA")
+  get_DEGs(cell_type, "RNA")
+}
+
+# Extract expressed ligands and receptors for each cell type and ligand state
+for (cell_type in cell_types) {
+  # Extract unique ligands and receptors from lr_network
+  ligands <- lr_network %>% filter(to %in% get(paste0("expressed_genes_", cell_type))) %>% pull(from) %>% unique()
+  receptors <- lr_network %>% filter(from %in% get(paste0("expressed_genes_", cell_type))) %>% pull(to) %>% unique()
+  
+  # Loop through each ligand state (Up and Down)
+  for (ligand_state in c("Up", "Down")) {
+    # Generate expressed receptors for the current cell type
+    expressed_receptors <- intersect(receptors, get(paste0("expressed_genes_", cell_type)))
+    assign(paste0("expressed_receptors_", cell_type), expressed_receptors, envir = .GlobalEnv)
+    
+    # Generate expressed ligands for the current cell type and ligand state
+    expressed_ligands <- intersect(ligands, get(paste0(cell_type, "_DEGs_", ligand_state)))
+    assign(paste0("expressed_ligands_", ligand_state, "_", cell_type), expressed_ligands, envir = .GlobalEnv)
+  }
+}
+
+# Function to get potential ligands
+get_potential_ligands <- function(ligand_cell_type, ligand_state, receptor_cell_type) {
+  ligands <- get(paste0("expressed_ligands_", ligand_state, "_", ligand_cell_type))
+  receptors <- get(paste0("expressed_receptors_", receptor_cell_type))
+  filtered_edges <- lr_network %>%
+    filter(from %in% ligands & to %in% receptors)
+  potential_ligands <- unique(filtered_edges$from)
+  if (length(potential_ligands) == 0) potential_ligands <- 0
+  assign(paste0("potential_ligands_", ligand_state, "_", ligand_cell_type, "_to_", receptor_cell_type), potential_ligands, envir = .GlobalEnv)
+}
+
+# Get potential ligands for each combination of cell types and states
+for (ligand_cell_type in cell_types) {
+  for (ligand_state in c("Up", "Down")) {
+    for (receptor_cell_type in cell_types) {
+      get_potential_ligands(ligand_cell_type, ligand_state, receptor_cell_type)
+    }
+  }
+}
+
+# Function to compute ligand activities
+compute_ligand_activities <- function(geneset, background_genes, ligand_target_matrix, potential_ligands) {
+  ligand_activities <- predict_ligand_activities(
+    geneset = geneset,
+    background_expressed_genes = background_genes,
+    ligand_target_matrix = ligand_target_matrix,
+    potential_ligands = potential_ligands
+  )
+  return(ligand_activities)
+}
+
+# Compute ligand activities for each combination
+ligand_activities_results <- list()
+for (ligand_cell_type in cell_types) {
+  for (ligand_state in c("Up", "Down")) {
+    for (receptor_cell_type in cell_types) {
+      # Get the DEGs of the receptor cell type with the same up or down state as ligand state
+      receptor_DEGs <- get(paste0(receptor_cell_type, "_DEGs_", ligand_state))
+      
+      # Get potential ligands
+      potential_ligands <- get(paste0("potential_ligands_", ligand_state, "_", ligand_cell_type, "_to_", receptor_cell_type))
+      
+      # Check if the DEGs list contains at least 10 genes and potential ligands is not equal to 0
+      if (length(receptor_DEGs) >= 10 && !identical(potential_ligands, 0)) {
+        background_genes <- get(paste0("background_expressed_genes_", receptor_cell_type))
+        ligand_target_matrix <- ligand_target_matrix
+        
+        # Compute ligand activities only if potential ligands is not empty
+        result <- compute_ligand_activities(receptor_DEGs, background_genes, ligand_target_matrix, potential_ligands)
+        ligand_activities_results[[paste0(ligand_cell_type, ".", ligand_state, ".", receptor_cell_type)]] <- result
+      } else {
+        if (identical(potential_ligands, 0)) {
+          cat("Skipping computation for", ligand_cell_type, "as potential ligands is empty.\n")
+        } else {
+          cat("Skipping computation for", receptor_cell_type, "as it has less than 10 DEGs.\n")
+        }
+      }
+    }
+  }
+}
+
+
+```
+
+```{r}
+# Convert the list of tibbles to a long dataframe
+ligand_activities_results_long_df <- do.call(rbind, lapply(names(ligand_activities_results), function(name) {
+  df <- ligand_activities_results[[name]]
+  df$Sender.to.receiver <- name
+  return(df)
+}))
+
+# filtering most significants and re-formatting
+ligand_activities_results_long_df <- ligand_activities_results_long_df %>%
+  dplyr::filter(auroc > 0.5 & aupr_corrected > 0 & pearson > 0) %>% 
+  separate(Sender.to.receiver, into = c("Sender", "Direction", "Receiver"), sep="\\.") %>% 
+  mutate(Treatment=ifelse(Direction=="Up", "MSA-2", "Ctrl")) %>% 
+  dplyr::select(-Direction)
+```
+
+Missing combinations are give 0 values and are added
+```{r}
+all_combinations_ligands <- all_combinations %>% 
+  dplyr::select(-delta.prob) %>% 
+  mutate(test_ligand="No_Ligand") %>% 
+  mutate(auroc=0, aupr=0, aupr_corrected=0, pearson=0) %>% 
+  dplyr::rename("Sender" = "source") %>%
+  dplyr::rename("Receiver" = "target")
+
+all_combinations_ligands<-all_combinations_ligands %>% 
+  rbind(all_combinations_ligands) %>% 
+  mutate(Treatment=c(rep("MSA-2", nrow(.)/2), rep("Ctrl", nrow(.)/2)))
+
+missing_combinations_ligands <- anti_join(all_combinations_ligands, ligand_activities_results_long_df, by = c("Sender", "Receiver", "Treatment"))
+
+ligand_activities_results_long_df <- rbind(ligand_activities_results_long_df, missing_combinations_ligands)
+```
+
+
+# Ligand expression in CAF subtypes
+The ligands in CAFs are extracted and their expression examined in CAF subtypes through calculating Z-scores. 
+This function adds a z-score in the metadata of a seurat object. The signature should be a character vector
+```{r}
+Add_Z<-function(in_SO, in_sig, Z_name){
+  
+  DefaultAssay(in_SO) <- "RNA"
+  #verifies the genes are part of the seurat object
+  in_sig<-in_sig[in_sig %in% rownames(in_SO)]
+  
+   # Genes which are 0 in >95% of cells are removed
+  long_NC <- in_SO@assays$RNA@data[in_sig,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) %>% 
+    group_by(Gene) %>% 
+    summarise(prop_zeros = sum(NC == 0)/n()) %>% 
+    dplyr::filter(prop_zeros <= 0.95) %>% 
+    dplyr::select(-prop_zeros)
+    
+  # NC is extracted from the SO
+    long_NC <- in_SO@assays$RNA@data[long_NC$Gene,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) 
+  
+  # Signature scores are calculated for each cell
+  get_zs<-function(in_sign){
+    Z_scores<-long_NC %>%
+      filter(Gene %in% in_sign) %>% 
+      group_by(Gene) %>%
+      mutate(Z = (NC - mean(NC)) / sd(NC)) %>%
+      drop_na() %>% 
+      group_by(Cell) %>%
+      summarise(sign_Z = mean(Z) %>% round(2)) %>%
+      dplyr::rename(!!Z_name := sign_Z)
+    
+    return(Z_scores)
+  }
+  
+  Z_df<-get_zs(in_sig) 
+ 
+  # Z-score is added to the metadata
+  in_SO@meta.data<-in_SO@meta.data %>% 
+    rownames_to_column("Cell") %>% 
+    left_join(Z_df, by="Cell") %>% 
+    column_to_rownames("Cell")
+  
+  return(in_SO)
+}
+```
+
+MSA-2 modulated ligands are extracted and plotted for CAF subtypes 
+```{r}
+MSA2.Induced.CAF.Ligands <- ligand_activities_results_long_df %>%
+  filter(Sender %in% "CAFs") %>%
+  filter(Treatment %in% "MSA-2") %>%
+  pull(test_ligand) %>%
+  unique()
+
+MSA2.Repressed.CAF.Ligands <- ligand_activities_results_long_df %>%
+  filter(Sender %in% "CAFs") %>%
+  filter(Treatment %in% "Ctrl") %>%
+  pull(test_ligand) %>%
+  unique()
+```
+
+```{r}
+CAFs <- subset(Ortho.Tumors.MSA2.integrated, idents = "CAFs")
+
+CAFs <- Add_Z(CAFs, MSA2.Induced.CAF.Ligands, "MSA-2 Induced Ligands")
+CAFs <- Add_Z(CAFs, MSA2.Repressed.CAF.Ligands, "MSA-2 Repressed Ligands")
+```
+
+# Expression of MSA-2 induced ligands in CAF subtypes - Figure S10A
+```{r}
+MSA2.Induced.CAF.Ligands.Z.Scores <- CAFs@meta.data %>%
+  dplyr::select(c("MSA-2 Induced Ligands", Cell_Type_Level_3))
+
+Fig_610A_plot <- ggplot(MSA2.Induced.CAF.Ligands.Z.Scores, aes(x = Cell_Type_Level_3, y = `MSA-2 Induced Ligands`, fill = Cell_Type_Level_3)) +
+  geom_boxplot() +
+  labs(x = "CAF subtype", y = "MSA-2 Induced\nLigand Z-Score", title = "Ligand Expression in CAF subtypes") +
+  theme_bw()  +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1, size = 10), legend.position = "none", axis.title = element_text(size = 12), axis.text.y = element_text(size = 10), plot.title = element_text(hjust = 0.5)) 
+
+if (!dir.exists("Figure_S10")) {dir.create("Figure_S10")}
+ggsave(plot = Fig_610A_plot, "Figure_S10A_MSA2_Induced_Ligand_Expression.pdf", width = 4.5, height = 3, units = "in", path = "Figure_S10/")
+```
+
+# Expression of MSA-2 repressed ligands in CAF subtypes - Figure 6I
+```{r}
+MSA2.Repressed.CAF.Ligands.Z.Scores <- CAFs@meta.data %>%
+  dplyr::select(c("MSA-2 Repressed Ligands", Cell_Type_Level_3))
+
+Fig_6I_plot <- ggplot(MSA2.Repressed.CAF.Ligands.Z.Scores, aes(x = Cell_Type_Level_3, y = `MSA-2 Repressed Ligands`, fill = Cell_Type_Level_3)) +
+  geom_boxplot() +
+  labs(x = "CAF subtype", y = "MSA-2 Repressed\nLigand Z-Score", title = "Ligand Expression in CAF subtypes") +
+  theme_bw()  +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1, size = 10), legend.position = "none", axis.title = element_text(size = 12), axis.text.y = element_text(size = 10), plot.title = element_text(hjust = 0.5)) 
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = Fig_6I_plot, "Figure_6I_MSA2_Repressed_Ligand_expression.pdf", width = 4.5, height = 3, units = "in", path = "Figure_6/")
+```
+
+
+
+# CAF Ligand activites
+The expression of the targets of MSA-2 modulated CAF-derived signals (i.e the targets) are extracted and examined in all cell types. 
+
+# MSA-2 induced ligands activities - Figure 6C
+```{r}
+CAF.ligand.activities.MSA2.Induced <- ligand_activities_results_long_df %>%
+  filter(Sender %in% "CAFs") %>%
+  filter(Treatment %in% "MSA-2")
+
+# Create the boxplot
+Fig_6C_plot <- ggplot(CAF.ligand.activities.MSA2.Induced, aes(x = Receiver, y = aupr_corrected, fill = Receiver)) +
+  geom_boxplot() +
+  labs(x = "Receiver Cell Type", y = "MSA-2 Induced\nLigand Activity", title = "Ligand Activity from CAFs") +
+  theme_bw()  +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1, size = 10), legend.position = "none", axis.title = element_text(size = 12), axis.text.y = element_text(size = 10), plot.title = element_text(hjust = 0.5))
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = Fig_6C_plot, "Figure_6C_MSA2_Induced_Ligand_Activity.pdf", width = 4.5, height = 3, units = "in", path = "Figure_6/")
+```
+
+# MSA-2 repressed ligands activities - Figure 6J
+```{r}
+CAF.ligand.activities.MSA2.Repressed <- ligand_activities_results_long_df %>%
+  filter(Sender %in% "CAFs") %>%
+  filter(Treatment %in% "Ctrl")
+
+# Create the boxplot
+Fig_6J_plot <- ggplot(CAF.ligand.activities.MSA2.Repressed, aes(x = Receiver, y = aupr_corrected, fill = Receiver)) +
+  geom_boxplot() +
+  labs(x = "Receiver Cell Type", y = "MSA-2 Repressed\nLigand Activity", title = "Ligand Activity from CAFs") +
+  theme_bw()  +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust=1, size = 10), legend.position = "none", axis.title = element_text(size = 12), axis.text.y = element_text(size = 10), plot.title = element_text(hjust = 0.5))
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = Fig_6J_plot, "Figure_6J_MSA2_Repressed_Ligand_Activity.pdf", width = 4.5, height = 3, units = "in", path = "Figure_6/")
+```
+
+
+# Identification of targets for all combinations
+```{r}
+# Create a new list to store the weighted ligand-target links
+weighted_ligand_target_links_results <- list()
+
+# Loop through each combination
+for (ligand_cell_type in cell_types) {
+  for (ligand_state in c("Up", "Down")) {
+    for (receptor_cell_type in cell_types) {
+      
+      # Define ligand name
+      ligand_name <- paste0(ligand_cell_type, ".", ligand_state, ".", receptor_cell_type)
+      
+      # Check if ligand name exists in the ligand_activities_results list
+      if (ligand_name %in% names(ligand_activities_results)) {
+        # Get potential ligands from the ligand_activities_results list
+        ligands <- ligand_activities_results[[ligand_name]]
+
+        # Filter ligands based on the specified criteria
+        filtered_ligands <- ligands %>%
+          filter(auroc > 0.5 & aupr_corrected > 0 & pearson > 0) %>%
+          pull(test_ligand)
+        
+        # Check if ligands exist after filtering
+        if (length(filtered_ligands) > 0) {
+          # Run get_weighted_ligand_target_links iteratively
+          weighted_links <- filtered_ligands %>%
+            lapply(get_weighted_ligand_target_links, geneset = get(paste0(receptor_cell_type, "_DEGs_", ligand_state)), ligand_target_matrix = ligand_target_matrix, n = 200) %>%
+            bind_rows() %>%
+            drop_na()
+          
+          # Store the result in the list with appropriate naming convention
+          weighted_ligand_target_links_results[[ligand_name]] <- weighted_links
+        } else {
+          cat("Skipping computation for", ligand_name, "as filtered ligands are empty.\n")
+        }
+      } else {
+        cat("Skipping computation for", ligand_name, "as it does not exist in ligand_activities_results.\n")
+      }
+    }
+  }
+}
+```
+
+```{r}
+# Convert the list of tibbles to a long dataframe
+weighted_ligand_target_links_results_long_df <- do.call(rbind, lapply(names(weighted_ligand_target_links_results), function(name) {
+  df <- weighted_ligand_target_links_results[[name]]
+  df$Sender.to.receiver <- name
+  return(df)
+}))
+
+weighted_ligand_target_links_results_long_df<-weighted_ligand_target_links_results_long_df %>% 
+  separate(Sender.to.receiver, into = c("Sender", "Direction", "Receiver"), sep="\\.") %>% 
+  mutate(Treatment=ifelse(Direction=="Up", "MSA-2", "Ctrl")) %>% 
+  dplyr::select(-Direction)
+
+get_sender_receiver_targets <- function(Sender_oi, Receiver_oi, Treatment_oi) {
+sender_receiver_targets <- weighted_ligand_target_links_results_long_df %>%
+  filter(Sender %in% Sender_oi) %>%
+  filter(Receiver %in% Receiver_oi) %>%
+  filter(Treatment %in% Treatment_oi) %>%
+  pull(target) %>%
+  unique()
+
+  return(sender_receiver_targets)
+}
+```
+
+Two sender-reciever interactions modulated by MSA-2 are of particular interests:
+1. The CAF-to-Neutrophils signals induced by MSA-2 (see figure C above)
+2. The CAF-to-Epithelial signals repressed by MSA-2 (see figure I-J below)
+The lists of genes for these two categories are extracted and saved
+
+```{r}
+# genes modulated in neutrophils that are targets of CAF-derived signals induced by MSA-2
+CAF.Neutrophil.Targets.MSA2.Up <- get_sender_receiver_targets("CAFs", "Neutrophils", "MSA-2")
+write.table(CAF.Neutrophil.Targets.MSA2.Up, "CAF.Neutrophil.Targets.MSA2.Up.txt", sep = "\t")
+
+# genes that are targets of CAF-derived signals in epithelial cells repressed by MSA-2
+CAF.Epithelial.Targets.MSA2.Down <- get_sender_receiver_targets("CAFs", "Epithelial", "Ctrl")
+write.table(CAF.Epithelial.Targets.MSA2.Down, "CAF.Epithelial.Targets.MSA2.Down.txt", sep = "\t")
+```
+
+# MSA2-Induced CAF Ligands: Targets in neutrophils - Figure 6D
+The list of CAF neutrophil targets induced by MSA2 `CAF.Neutrophil.Targets.MSA2.Up` is described above. Here it is loaded directly.
+```{r}
+CAF.Neutrophil.Targets.MSA2.Up<-c("F3", "Fos", "Hmox1", "Icam1", "Inhba", "Ptgs2", "Pttg1", "Slc7a11", "Tnfaip3", "Capg", "Ccl4", "Ddit3", "Dusp1", "Gadd45a", "H2-D1", "H2-K1", "H2-Q4", "H2-Q6", "H2-Q7", "Ier3", "Ifit1", "Ifit3", "Ifit3b", "S100a9", "Tent5a", "Tiparp", "Tnf", "Atf3", "Bcl2l1", "Cited2", "Fas", "Ifi204", "Ifi206", "Ifi207", "Ifi209", "Ifi211", "Il1a", "Irf7", "Jun", "Nfkbia", "Sat1", "Stat1", "Tgif1", "Thbs1", "Trib1", "Cebpb", "Ankrd33b", "Cflar", "Isg20", "Lmnb1", "Zfp36", "Ifit2", "Nedd9", "Smad3", "Plaur", "Abca1", "Ctsd", "Ctsz", "Ehd1", "Gch1", "Grn", "Ier5", "Marcksl1", "Msrb1", "Rps6ka2", "Stk17b", "Tgfbi", "Dedd2", "Ppp1r15a", "Anxa1", "Fth1", "Irf9", "Ninj1", "S100a11", "Slc31a2", "Slc38a2", "Zyx", "Klf6", "Phlda1", "Ubc", "Arid5b", "Igf1r", "Sod2", "Cxcl2", "Traf1", "Alox5ap", "Bst2", "Gbp2", "Herc6", "Nfkbiz", "Oas3", "Parp14", "Rsad2", "Samd9l", "Stx11", "Tank", "Tnfaip6", "Tnip1", "Tspo", "Asph", "B2m", "Casp4", "Glrx", "H2-T22", "H2-T23", "Ifitm2", "Ifitm3", "Ifitm6", "Lcn2", "Nampt", "Itpr2", "Ly6e", "Por", "Ddx60", "Igsf6", "Snx20", "Timp2", "Ubb")
+```
+
+```{r}
+Ortho.Tumors.MSA2.integrated <- readRDS("Ortho.Tumors.MSA2.integrated.RDS")
+
+# Assign Cell_Type_Level_2 to identities
+Ortho.Tumors.MSA2.integrated <- SetIdent(Ortho.Tumors.MSA2.integrated, value = Ortho.Tumors.MSA2.integrated@meta.data$Cell_Type_Level_2)
+
+Ortho.Tumors.Neutrophils <- subset(Ortho.Tumors.MSA2.integrated, idents = "Neutrophils")
+
+Ortho.Tumors.Neutrophils <- Add_Z(Ortho.Tumors.Neutrophils, CAF.Neutrophil.Targets.MSA2.Up, "MSA-2 Induced Ligand Targets - CAFs to Neutrophils")
+```
+
+```{r}
+Ortho.Tumors.Neutrophils@meta.data <- Ortho.Tumors.Neutrophils@meta.data %>%
+ mutate(Neutrophil.Subtype = case_when(Cell_Type_Level_3 == "Il1r2+ Neutrophils" ~ "TAN 1",
+                               Cell_Type_Level_3 == "Retnlg+ Neutrophils" ~ "Other",
+                               Cell_Type_Level_3 == "Rsad2+ Neutrophils" ~ "TAN 2",
+                               Cell_Type_Level_3 == "Ccl3+ Neutrophils" ~ "TAN 3",
+                               Cell_Type_Level_3 == "Ccl4+ Neutrophils" ~ "TAN 3",
+                               Cell_Type_Level_3 == "Csf3r+ Neutrophils" ~ "Other",
+                               Cell_Type_Level_3 == "Ngp+ Neutrophils" ~ "Other"))
+
+```
+
+# Figure 6D left
+```{r}
+Fig_6Dleft_plot <- VlnPlot(Ortho.Tumors.Neutrophils, features = "MSA-2 Induced Ligand Targets - CAFs to Neutrophils", group.by = "Neutrophil.Subtype", pt.size = 0) + NoLegend() +  ylab("Target Z-score")
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = Fig_6Dleft_plot, "Figure_6D_MSA2_Induced_CAF_Ligands_Neutrophil_Targets_Z_Scores.pdf", width = 3, height = 4, units = "in", path = "Figure_6/")
+```
+
+# Markers of neutrophil subtypes
+Markers of neutrophil subtypes in the present in vivo single cell dataset, are extracted.
+```{r}
+TAN.1.Markers <- FindMarkers(Ortho.Tumors.Neutrophils, ident.1 = "TAN 1", assay = "RNA", group.by = "Neutrophil.Subtype", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+
+TAN.2.Markers <- FindMarkers(Ortho.Tumors.Neutrophils, ident.1 = "TAN 2", assay = "RNA", group.by = "Neutrophil.Subtype", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+
+TAN.3.Markers <- FindMarkers(Ortho.Tumors.Neutrophils, ident.1 = "TAN 3", assay = "RNA", group.by = "Neutrophil.Subtype", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+
+TAN.Other.Markers <- FindMarkers(Ortho.Tumors.Neutrophils, ident.1 = "Other", assay = "RNA", group.by = "Neutrophil.Subtype", logfc.threshold = 0.585, min.pct = 0.25, only.pos = T)
+
+write.table(TAN.1.Markers, "TAN.1.Markers.In.Vivo.txt", sep = "\t")
+write.table(TAN.2.Markers, "TAN.2.Markers.In.Vivo.txt", sep = "\t")
+write.table(TAN.3.Markers, "TAN.3.Markers.In.Vivo.txt", sep = "\t")
+write.table(TAN.Other.Markers, "TAN.Other.Markers.In.Vivo.txt", sep = "\t")
+```
+
+# Pathway enrichment analysis
+Gene set enrichment analysis (over-representation analysis=ORA) is performed with clusterProfiler
+```{r}
+library(clusterProfiler)
+library(org.Mm.eg.db)
+library(ReactomePA)
+library(msigdbr)
+```
+
+A function for the Over Representation Analysis based on gene list. It needs an input vector of genes. The function can be run in mode "reactome", "KEGG" or "custom" depending on the desired analysis. In custom mode, the gene set must be provided. 
+The enrichment results are output as a dataframe
+```{r}
+Get_ORA_DF <-function(in_vect, mode="reactome", custom_gene_set=NA){
+  
+  Entrez_vect<-AnnotationDbi::select(org.Mm.eg.db, columns = c("ENTREZID", "SYMBOL"), keys = in_vect, keytype = "SYMBOL") %>%  
+    drop_na() %>%
+    `$`(ENTREZID)
+  
+  if (mode=="reactome"){
+    ora <- enrichPathway(gene = Entrez_vect, organism = 'mouse', pAdjustMethod = "BH")}
+
+  if (mode=="KEGG"){
+    ora <- enrichKEGG(gene = Entrez_vect, organism = 'mmu', pAdjustMethod = "BH")}
+  
+  if (mode=="custom"){
+    ora <- enricher(gene = Entrez_vect, TERM2GENE = custom_gene_set, pAdjustMethod = "BH")}
+  
+  ora_df<-ora@result %>%
+    filter(p.adjust < 0.05) %>% 
+    dplyr::select(c("Description", "GeneRatio", "BgRatio", "RichFactor", "FoldEnrichment", "zScore", "pvalue", "p.adjust", "qvalue", "geneID", "Count"))
+  
+  return(ora_df)
+}
+```
+
+Specific gene set annotations are selected for custom ORA analysis
+H: hallmark gene sets
+C1: positional gene sets
+C2: curated gene sets
+C3: motif gene sets
+C4: computational gene sets
+C5: GO gene sets
+C6: oncogenic signatures
+C7: immunologic signatures
+```{r}
+H_Geneset <- msigdbr(species = "Mus musculus", category = "H") %>% 
+  dplyr::select(gs_name, entrez_gene)
+C1_Geneset <- msigdbr(species = "Mus musculus", category = "C1") %>% 
+  dplyr::select(gs_name, entrez_gene)
+C2_Geneset <- msigdbr(species = "Mus musculus", category = "C2") %>% 
+  dplyr::select(gs_name, entrez_gene)
+C3_Geneset <- msigdbr(species = "Mus musculus", category = "C3") %>% 
+  dplyr::select(gs_name, entrez_gene)
+C4_Geneset <- msigdbr(species = "Mus musculus", category = "C4") %>% 
+  dplyr::select(gs_name, entrez_gene)
+C5_Geneset <- msigdbr(species = "Mus musculus", category = "C5") %>% 
+  dplyr::select(gs_name, entrez_gene)
+C6_Geneset <- msigdbr(species = "Mus musculus", category = "C6") %>% 
+  dplyr::select(gs_name, entrez_gene)
+C7_Geneset <- msigdbr(species = "Mus musculus", category = "C7") %>% 
+  dplyr::select(gs_name, entrez_gene)
+```
+
+
+```{r}
+MSA2.Induced.CAF.Neutrophils.targets.reactome.ORA <- Get_ORA_DF(in_vect = CAF.Neutrophil.Targets.MSA2.Up, mode = "reactome")
+MSA2.Induced.CAF.Neutrophils.targets.KEGG.ORA <-Get_ORA_DF(in_vect = CAF.Neutrophil.Targets.MSA2.Up, mode = "KEGG")
+MSA2.Induced.CAF.Neutrophils.targets.HALLMARK.ORA <-Get_ORA_DF(in_vect = CAF.Neutrophil.Targets.MSA2.Up, mode = "custom", custom_gene_set = H_Geneset)
+```
+
+Top 20 enriched sets are selected
+```{r}
+MSA2.Induced.CAF.Neutrophils.targets.ORA <- rbind(MSA2.Induced.CAF.Neutrophils.targets.reactome.ORA, MSA2.Induced.CAF.Neutrophils.targets.KEGG.ORA, MSA2.Induced.CAF.Neutrophils.targets.HALLMARK.ORA)
+MSA2.Induced.CAF.Neutrophils.targets.ORA <- MSA2.Induced.CAF.Neutrophils.targets.ORA %>%
+  top_n(-20, p.adjust)
+```
+
+
+# Figure 6D right
+```{r}
+MSA2.CAF.Neutrophil.ORA.selected.pathways <- MSA2.Induced.CAF.Neutrophils.targets.ORA %>%
+  dplyr::filter(Description %in% c("HALLMARK_INTERFERON_ALPHA_RESPONSE", "HALLMARK_INTERFERON_GAMMA_RESPONSE", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "HALLMARK_APOPTOSIS", "NF-kappa B signaling pathway")) 
+
+# format description and sort
+MSA2.CAF.Neutrophil.ORA.selected.pathways <- MSA2.CAF.Neutrophil.ORA.selected.pathways %>%
+  mutate(Description = gsub("_", " ", Description)) %>% 
+  mutate(WrappedDescription=str_wrap(Description, width = 20)) %>% 
+  arrange(desc(Count)) %>% 
+  mutate(WrappedDescription=factor(WrappedDescription, levels=rev(unique(WrappedDescription))))
+
+# Create the plot
+Fig_6Dright_plot <- ggplot(MSA2.CAF.Neutrophil.ORA.selected.pathways, aes(x = WrappedDescription, y = Count, fill = p.adjust)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_gradient(low = "tomato4", high = "tomato", name = "P-adjust") +
+  labs(x = "Description", y = "Count", title = "") +
+  coord_flip() + # Flips the axes
+  theme_bw() +
+  theme(legend.position = "right") +theme(text = element_text(size = 10))
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = Fig_6Dright_plot, "Figure_6D_MSA2_Induced_CAF_Ligands_Neutrophil_Targets_ORA.pdf", width = 3.75, height = 4, units = "in", path = "Figure_6/")
+```
+
+
+
+# MSA2-repressed CAF Ligands: Targets in epithelial cells - Figure 6K
+The list of CAF epithelial targets repressed by MSA-2 `CAF.Epithelial.Targets.MSA2.Down` is described above. Here it is loaded directly.
+```{r}
+CAF.Epithelial.Targets.MSA2.Down<-c("Anxa3", "Bcl6", "Birc5", "Cav1", "Ccnd3", "Cd44", "Dusp5", "Egr1", "Fn1", "Gadd45a", "Gclc", "H3f3b", "Hes1", "Id2", "Igfbp3", "Il1r1", "Irs1", "Ndrg1", "Nek6", "Pthlh", "Smad7", "Spp1", "Tgfb1", "Tgif1", "Tnfrsf23", "Vcam1", "Vegfa", "Bdnf", "Cbx5", "Cdk4", "Cdk6", "Chd2", "Col1a2", "Egr3", "Odc1", "Rbpj", "Smad3", "Sytl2", "Vcan", "Acan", "Ets1", "Iqgap1", "Nup153", "Timp1", "Zfp36l1", "Caprin1", "Cd9", "Col4a1", "Col5a1", "Copa", "Runx1", "Sox4", "Zswim8", "Arid1a", "Etv4", "Scd2", "Tagln2", "Col1a1", "Ctnnb1", "Igf1r", "Itga5", "Nrp1", "Skil", "Chic2", "Dlg1", "Emp1", "Galnt1", "Etv1", "Itga6", "Nme1", "Ranbp1", "Tm4sf1", "Mxi1", "Tyms", "Dpysl2", "Fhl2", "Man1a", "Ptk2b", "Rtn4", "Slc14a1", "Anxa2", "Ap1s2", "Cald1", "Fndc3b", "Igfbp4", "Mmd", "Nme7", "Rgl1", "S100a6", "Tacc1", "Cdk1", "Cks1b", "Hif1a", "Rrm1", "Cuedc1", "Klf9", "Nfix", "Arid5b", "Mnat1", "Rgs2", "Snx12", "Mapk8", "Clu", "Gem", "Nfe2l2", "Nr2f1", "Pcdh7", "Psd3", "Yap1", "Zbtb20", "Ackr3", "Areg", "Btg3", "Dennd5a", "Ereg", "Inhba", "Nab1", "Pla2g4a", "Slc39a14", "Stc1", "Vegfc", "Anxa5", "Map1lc3b", "Pdap1", "Rhoa", "Brd8", "Dip2c", "Eif1ax", "Ifrd1", "Irx5", "Runx2", "Slc29a1", "Stmn1", "Tle3", "Top2a", "Tpx2", "Tubb2b", "Jag1", "Ltbp1", "Lamb1", "Cdkn2a", "Foxp1", "Hnrnpul1", "Nav2", "Smc4", "Syncrip", "Tpt1", "Ube2e2", "Zmiz1", "Shc1", "Dusp10", "Lsm6", "Map1b", "Npnt", "Pds5b", "Srsf3", "Atp10a", "En1", "Ndst3", "Pak3", "Sparc", "Abcb1a", "Abcb1b", "Asap1", "Bhlhe41", "Cadm1", "Gnas", "Zeb1", "Atad2", "Mcm7")
+```
+
+
+```{r}
+Ortho.Tumors.MSA2.integrated <- readRDS("Ortho.Tumors.MSA2.integrated.RDS")
+
+# Assign Cell_Type_Level_2 to identities
+Ortho.Tumors.MSA2.integrated <- SetIdent(Ortho.Tumors.MSA2.integrated, value = Ortho.Tumors.MSA2.integrated@meta.data$Cell_Type_Level_2)
+
+Ortho.Tumors.Epithelial <- subset(Ortho.Tumors.MSA2.integrated, idents = "Epithelial")
+
+Ortho.Tumors.Epithelial <- Add_Z(Ortho.Tumors.Epithelial, CAF.Epithelial.Targets.MSA2.Down, "MSA-2 Repressed Ligand Targets - CAFs to Epithelial")
+```
+
+# Figure 6K left
+```{r}
+Fig_6Kleft_plot <- VlnPlot(Ortho.Tumors.Epithelial, features = "MSA-2 Repressed Ligand Targets - CAFs to Epithelial", group.by = "Cell_Type_Level_3", pt.size = 0) + NoLegend() + ylab("Target Z-score")
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = Fig_6Kleft_plot, "Figure_6K_MSA2_Repressed_CAF_Ligands_Epithelial_Targets_Z_Scores.pdf", width = 3.75, height = 4, units = "in", path = "Figure_6/")
+```
+
+
+```{r}
+MSA2.Repressed.CAF.Epithelial.targets.reactome.ORA <- Get_ORA_DF(in_vect = CAF.Epithelial.Targets.MSA2.Down, mode = "reactome")
+MSA2.Repressed.CAF.Epithelial.targets.KEGG.ORA <-Get_ORA_DF(in_vect = CAF.Epithelial.Targets.MSA2.Down, mode = "KEGG")
+MSA2.Repressed.CAF.Epithelial.targets.HALLMARK.ORA <-Get_ORA_DF(in_vect = CAF.Epithelial.Targets.MSA2.Down, mode = "custom", custom_gene_set = H_Geneset)
+```
+
+```{r}
+MSA2.Repressed.CAF.Epithelial.targets.ORA <- rbind(MSA2.Repressed.CAF.Epithelial.targets.reactome.ORA, MSA2.Repressed.CAF.Epithelial.targets.KEGG.ORA, MSA2.Repressed.CAF.Epithelial.targets.HALLMARK.ORA)
+MSA2.Repressed.CAF.Epithelial.targets.ORA <- MSA2.Repressed.CAF.Epithelial.targets.ORA %>%
+  top_n(-21, p.adjust)
+```
+
+# Figuree 6K right
+```{r}
+MSA2.Repressed.CAF.Epithelial.targets.ORA.selected.pathways <- MSA2.Repressed.CAF.Epithelial.targets.ORA %>%
+  dplyr::filter(Description %in% c("HALLMARK_EPITHELIAL_MESENCHYMAL_TRANSITION", "Focal adhesion", "ECM-receptor interaction", "Integrin cell surface interactions", "TGF-beta signaling pathway")) 
+
+# format description and sort
+MSA2.Repressed.CAF.Epithelial.targets.ORA.selected.pathways <- MSA2.Repressed.CAF.Epithelial.targets.ORA.selected.pathways %>%
+  mutate(Description = gsub("_", " ", Description)) %>% 
+  mutate(WrappedDescription=str_wrap(Description, width = 30)) %>% 
+  arrange(desc(Count)) %>% 
+  mutate(WrappedDescription=factor(WrappedDescription, levels=rev(unique(WrappedDescription))))
+
+# Create the plot
+Fig_6Kright_plot <- ggplot(MSA2.Repressed.CAF.Epithelial.targets.ORA.selected.pathways, aes(x = WrappedDescription, y = Count, fill = p.adjust)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  scale_fill_gradient(low = "#1E88E5", high = "lightblue", name = "P-adjust") +
+  labs(x = "Description", y = "Count", title = "") +
+  coord_flip() + # Flips the axes
+  theme_bw() +
+  theme(legend.position = "right") +theme(text = element_text(size = 10))
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = Fig_6Kright_plot, "Figure_6K_MSA2_Repressed_CAF_Ligands_Epithelial_Targets_ORA.pdf", width = 4.5, height = 4, units = "in", path = "Figure_6/")
+```
+
+```{r}
+Epithelial.cells <- subset(Ortho.Tumors.MSA2.integrated, idents = c("Epithelial"))
+```
+
+# Figure 6R
+```{r}
+Fig_6R_plot <- VlnPlot(Epithelial.cells, features = c("Spp1"), assay = "RNA", pt.size = 0, group.by = "Treatment") + NoLegend() + ggtitle("Spp1 expression in\nTumour cells in vivo")
+
+if (!dir.exists("Figure_6")) {dir.create("Figure_6")}
+ggsave(plot = Fig_6R_plot, "Figure_6R_Spp1_tumour_cells_in_vivo.pdf", width = 3, height = 4, units = "in", path = "Figure_6/")
+```
+
+
+
+
+
+
