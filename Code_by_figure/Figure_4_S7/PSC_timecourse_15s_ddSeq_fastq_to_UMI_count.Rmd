@@ -1,0 +1,511 @@
+---
+title: "PSC_cocul_timecourse_15s_scSeq_fastq_to_count"
+author: "Cedric"
+date: "2023-03-27"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+# Summary 
+The following code describes the processing of single cell RNAseq data from fastq files to raw UMI count for the ddSeq data generated in the co-culture experiment depicted in figure 4 of Cumming et al, 2025.
+The input data consists of 15 paired-end fastq files corresponding to 15 samples. 
+The raw sequence data as well as raw umi count are available on ArrayExpress with accession number E-MTAB-14945. 
+
+The code was run on the server Rackham on Uppmax made available by the National Academic Infrastructure for Supercomputing in Sweden (NAISS). It must therefore be adapted to the user's environement to reproduce the same output. 
+
+A single bash script `ddSeq_fastq_to_RUC.sh` is used to analyse ddSeq v2 single cell RNAseq data. 
+I takes the following arguments:
+- R1.fastq.gz
+- R2.fastq.gz
+- root name (i.e sample name)
+- path/to/STAR/genome
+- annotation_bedfile.bed
+
+It requires a single accessory python script `make_ddSeq_RUC_table.py`
+`make_ddSeq_RUC_table.py` calls a bash command to run cd-hit-est. cd-hit must therfore be installed and accessible. 
+The whitelist provided by Biorad contains the list of 96 barcodes from the barcoding oligos. 
+
+The raw umi count is returned for the top 1000 most frequent barcodes after barcode correction
+
+The script takes the following steps 
+1. R2 read names are renamed to a shorter format with headlines "R1" to "Rn"
+2. R2 reads are mapped to the human genome with STAR. The code for making of the STAR mappable genome directory is described in a separate R markdown `Mouse_genome_GRCm38.100_26Feb2024.Rmd`
+3. One primary alignment per read is kept using samtools. 
+4. Features are assigned to reads with bedtools, in this case the exons of protein coding transcripts. only one feature is kept per read, the one with longest alignment (or a random pick in case of tie). The code for making of the bed annotation file is described in `Mouse_genome_GRCm38.100_26Feb2024.Rmd`. 
+5. The read ID, raw barcode and UMI are extracted from R1 reads. Reads are renamed to "R1" to "Rn" on the fly. Reads with a matching linker are selected. Reads without matching linkers are saved separately. 
+6. Barcodes are corrected and the top 1000 most frequent barcodes are selected.
+7. Model sequences are made for the top 1000 barcodes and saved as fasta
+8. cd-hit-est is run to align the un-matched R2s to the model barcodes
+9. The cd-hit output is parsed and barcode and UMI are extracted from the corresponding (aligned) model barcode. 
+10. The barcode and UMI information from the matched and salvaged reads are merged
+11. Reads with the same barcode and UMIs and mapping to the same gene are collapsed into one representative read
+12. The barcode table and the gene table are joined
+13. The exon information is discarded and all reads belonging to the same gene are summed, resulting in a table with Read ID, Gene and raw UMI count (RUC).  
+
+The script returns a long raw UMI count dataframe that can be transformed to a sparse matrix and loaded in seurat.
+
+
+# Master script
+ddSeq_fastq_to_RUC.sh
+```{bash}
+#!/bin/bash -l
+
+#SBATCH -A NAISS2023-22-1275
+#SBATCH -p node -n 20
+#SBATCH -t 24:00:00
+#SBATCH -J ddSeq_fastq_to_ruc
+
+# run as sbatch ddSeq_fastq_to_RUC.sh <in_R1.fastq.gz> <in_R2.fastq.gz> <rootname> <path/to/mappable/genome> <protcod.bed>
+
+# copies the necessary files to scratch
+cp ${1} $SNIC_TMP/R1.fastq.gz &
+cp ${2} $SNIC_TMP/R2.fastq.gz &
+cp -r ${4} $SNIC_TMP/gendir
+wait
+
+cp ${5} $SNIC_TMP/bedfile
+
+cp make_ddSeq_RUC_table.py $SNIC_TMP/make_ddSeq_RUC_table.py
+cp Whitelist_ddSeq.txt $SNIC_TMP/Whitelist_ddSeq.txt
+
+# takes note of the working directory
+pwd=$(pwd)
+
+# moves to scratch
+cd $SNIC_TMP
+
+# loads modules
+module load bioinfo-tools
+module load python
+module load star/2.7.11a
+module load samtools/1.20
+module load BEDTools/2.31.1
+module load cd-hit/4.8.1
+
+# readID is renamed in the R2 fastq file
+zcat R2.fastq.gz | awk 'NR%4==1{print "@R"(NR+3)/4} NR%4!=1{print $1}' > rn_R2.fq
+
+# maps with star and annotates with bedtools
+STAR --runThreadN 18 --readFilesCommand cat --outFileNamePrefix R2_ --readFilesIn rn_R2.fq --genomeDir gendir --outSAMunmapped None --outFilterScoreMinOverLread 0.5 --outFilterMatchNminOverLread 0.5
+
+samtools view -h -b -F4 -F256 R2_Aligned.out.sam | samtools sort -O bam > mapped.bam
+echo "mapping completed"
+
+bedtools intersect -a mapped.bam -b bedfile -wo -split -s -f 0.25 -bed | awk '{print $4"\t"$16"\t"$19}' > read_feature.txt
+echo "feature annotation completed"
+
+# runs python script to generate the raw umi count
+python make_ddSeq_RUC_table.py $3 R1.fastq.gz read_feature.txt
+
+gzip ${3}_RUC_long.txt
+
+# copies output file
+cp -r ${3}_RUC_long.txt.gz $pwd
+echo "Raw UMI count pipeline completed"
+```
+
+# python script
+make_ddSeq_RUC_table.py
+```{python}
+# use as python make_ddSeq_RUC_table.py <rootname> <r1.fastq.gz> <read_feature.txt>
+
+import sys
+import pandas as pd
+import gzip
+import re
+import subprocess
+import random
+
+rootname = sys.argv[1]
+R1_fastq_file  = sys.argv[2]
+read_feature_file = sys.argv[3]
+
+# loads the bc whitelists  
+bc_wl=list()
+for seq in open("Whitelist_96_bc.txt"):
+    seq=seq.strip()
+    bc_wl.append(seq)
+
+# calculates the one-off whitelists
+def get_1_oneoffs(in_hexamer):
+    oneoffs_list=list()
+    for i in range(1,7):
+        pref=in_hexamer[0:i-1]
+        suff=in_hexamer[i:]
+        for letter in ['T', 'C', 'G', 'A']:
+          oneoffs_list.append(pref+letter+suff)
+    return oneoffs_list 
+
+def get_all_oneoffs(in_list):
+    all_1offs=list()
+    for item in in_list:
+        all_1offs=all_1offs+get_1_oneoffs(item)
+    return all_1offs
+
+bc_oowl=get_all_oneoffs(bc_wl)
+
+
+# makes a set of the whitelist
+bc_wl_set=set(bc_wl)
+bc_oowl_set=set(bc_oowl)
+
+
+# a function to calculate the distance between two strings
+def dist_bc(seq1,seq2):
+    seq1 = list(seq1)
+    seq2 = list(seq2)
+    return sum(map(lambda pair: pair[0] != pair[1], zip(seq1, seq2)))
+
+
+# function to correct barcode
+def correct_bc(inseq):
+    if inseq in bc_wl_set:
+        return inseq
+    
+    elif inseq in bc_oowl_set:
+        for item in bc_wl:
+            d = int(dist_bc(inseq, item))
+            if d<=1:
+                corbac = item
+                break
+        return corbac
+
+# R1 is read and barcodes extracted and corrected. Non-matching sequences are saved separately to a fasta file.
+RL_bcumi_lol=list()
+nomatch_sequences_lol=list()
+i=1
+pattern = re.compile(r'[ACGTN].....TAG.........TGC......TAC.........GAA......ACG........GAC')
+for line in gzip.open(R1_fastq_file, 'rt'):
+    fq_nr=(i+3)//4
+    if i%4==1:
+        headline='R'+str(fq_nr)
+    elif i%4==2:
+        seq=line.strip()
+        match=pattern.search(seq)
+        if match:
+            bc1=match.group()[0:6]
+            bc2=match.group()[21:27]
+            bc3=match.group()[42:48]
+            umi=match.group()[51:59]
+            if bc1 in bc_oowl_set and bc2 in bc_oowl_set and bc3 in bc_oowl_set:
+                # corrects barcodes
+                bc1=correct_bc(bc1)
+                bc2=correct_bc(bc2)
+                bc3=correct_bc(bc3)
+                bc=bc1+bc2+bc3
+                RL_bcumi_lol.append([headline, bc, umi])
+        else:
+            nomatch_sequences_lol.append([headline, seq])
+    i=i+1
+
+# nomatch sequences are saved to fasta, including sequence in header
+with open(rootname+"_nomatch.fas", 'w') as f:
+    for item in nomatch_sequences_lol:
+        headline=item[0]
+        seq=item[1]
+        seqtail=seq[40:]
+        f.write(">"+headline+"@"+seqtail+"\n"+seq+"\n")
+        
+# a subset of barcodes is sampled to generate top 1000 models
+subset_bc_list=random.sample([entry[1] for entry in RL_bcumi_lol], 100000)
+
+# function to output a list of top n barcodes
+def top_n_strings(input_list, n):
+    df = pd.DataFrame(input_list, columns=['strings'])
+    frq = df['strings'].value_counts()
+    return frq.head(n).index.tolist()
+
+top_1000_bc_list=top_n_strings(subset_bc_list, 1000)
+top_1000_bc_set=set(top_1000_bc_list)
+
+# barcodes belonging to the top 1000 most frequent are selected
+RL_bcumi_lol=[entry for entry in RL_bcumi_lol if entry[1] in top_1000_bc_set]
+
+# model sequences are saved to fasta
+with open(rootname+'_models.fas', 'w') as g:
+    i=int(1)
+    for bc in top_1000_bc_list:
+        g.write(">Cell_"+str(i)+"@"+bc+"\n"+bc[0:6]+"TAGCCATCGCATTGC"+bc[6:12]+"TACCTCTGAGCTGAA"+bc[12:18]+"ACG\n")
+        i=i+1
+
+# runs cd-hit
+process = subprocess.run(f"cd-hit-est-2d -i {rootname}_models.fas -i2 {rootname}_nomatch.fas -o {rootname}_nomatch_cdhit.fas -M 0 -T 10 -n 10 -d 0 -p 1 -c 0.93 -s2 0.75 -S2 20 -g 1", shell=True, check=True)
+
+# nomatch barcodes are salvaged from cd-hit output
+salvaged_bcumi_lol=list()
+for line in open(rootname+"_nomatch_cdhit.fas.clstr"):
+    if '>Cell' in line:
+        cell = line.split("@")[0].split(">")[1]
+        bc = line.split("...")[0].split("@")[1]
+
+    elif 'Cluster' not in line and '/+/' in line:
+        readID = line.split("@")[0].split(">")[1]
+        R1seqtail = line.split('...')[0].split('@')[1]
+        posinfo = line.split('/+/')[0].split('at ')[1]
+        readstart = int(posinfo.split(":")[0])
+        readend = int(posinfo.split(":")[1])
+        refstart = int(posinfo.split(":")[2])
+        refend = int(posinfo.split(":")[3])
+        pident = float(line.split('%')[0].split('/+/')[1])
+
+        if (readend-readstart+1)>=50 and (refend-refstart+1)>=50 and pident>=96:
+            bord_UMI = R1seqtail[readend-40-3:readend-40+11]
+            bord = bord_UMI[0:3]+bord_UMI[-3:]
+            UMI = bord_UMI[3:11]
+
+            if dist_bc("ACGGAC", bord)<=1:
+                salvaged_bcumi_lol.append([readID, bc, UMI])
+
+# matched and salvaged barcodes are joined and transformed to a dataframe
+bc_umi_df=pd.DataFrame(RL_bcumi_lol+salvaged_bcumi_lol, columns=['Read_ID', 'bc', 'umi'])
+
+bc_umi_df.to_csv(path_or_buf=rootname+'_bc_umi_df', sep='\t', index=False)
+
+# read info is loaded from the bedtools output file
+read_feature_df=pd.read_table(read_feature_file, names=['Read_ID', 'feature', 'align_length'])
+read_feature_df['Gene']=[item.split("_")[1] for item in read_feature_df['feature']]
+read_gene_df=read_feature_df[['Read_ID', 'Gene', 'align_length']]
+read_gene_df = read_gene_df.sort_values('align_length', ascending=False)
+read_gene_df = read_gene_df.drop_duplicates(subset=['Read_ID', 'Gene'])
+
+read_gene_df.to_csv(path_or_buf=rootname+'_read_gene_df', sep='\t', index=False)
+
+# The barcode and gene info are merged into a single table
+read_bc_umi_gene_df=pd.merge(bc_umi_df, read_gene_df, on='Read_ID', how='inner')
+read_bc_umi_gene_df=read_bc_umi_gene_df.reset_index(drop=True)
+
+read_bc_umi_gene_df.to_csv(path_or_buf=rootname+'_read_bc_umi_gene_df', sep='\t', index=False)
+
+# The UMIs are flattened 
+read_bc_gene_df=read_bc_umi_gene_df.drop_duplicates(['bc', 'umi', 'Gene'], keep="first").reset_index(drop=True).drop('umi', axis=1)
+
+read_bc_gene_df.to_csv(path_or_buf=rootname+'_read_bc_gene_df', sep='\t', index=False)
+
+# The number of UMI per bracode-gene pair is caculated
+bc_Gene_UC=read_bc_gene_df.groupby(['bc', 'Gene']).size().rename('RUC').reset_index()
+bc_Gene_UC.to_csv(path_or_buf=rootname+'_RUC_long.txt', sep='\t', index=False)
+```
+
+# Running the pipeline
+The pipeline is run on the 15 samples
+```{bash}
+i=1
+while [ $i -le 15 ]
+do
+  sbatch ddSeq_fastq_to_RUC.sh ~/PSC_cocul_timecourse_15s_ddSeq/s${i}_R1.fastq.gz ~/PSC_cocul_timecourse_15s_ddSeq/s${i}_R2.fastq.gz s${i} ~/Mouse_Genome_GRCm38.100/Musmu_GRC38_STAR_mappable_genome_10May2020 ~/Mouse_Genome_GRCm38.100/Musmu_GRCm38.100_protcod_fd.bed
+  i=$((i+1))
+done &
+```
+
+
+# Selection of cells and making of a UMI count matrix
+The cells are selected manually using knee plots representing the barcode frequencies. The read count distribution for the top 1000 cells is plotted with ggplot
+```{r, warning=FALSE, message=FALSE}
+library(tidyverse)
+
+s1_RUC_long_df<-read.table(gzfile("s1_RUC_long.txt.gz"), header = T, sep="\t")
+s2_RUC_long_df<-read.table(gzfile("s2_RUC_long.txt.gz"), header = T, sep="\t")
+s3_RUC_long_df<-read.table(gzfile("s3_RUC_long.txt.gz"), header = T, sep="\t")
+s4_RUC_long_df<-read.table(gzfile("s4_RUC_long.txt.gz"), header = T, sep="\t")
+s5_RUC_long_df<-read.table(gzfile("s5_RUC_long.txt.gz"), header = T, sep="\t")
+s6_RUC_long_df<-read.table(gzfile("s6_RUC_long.txt.gz"), header = T, sep="\t")
+s7_RUC_long_df<-read.table(gzfile("s7_RUC_long.txt.gz"), header = T, sep="\t")
+s8_RUC_long_df<-read.table(gzfile("s8_RUC_long.txt.gz"), header = T, sep="\t")
+s9_RUC_long_df<-read.table(gzfile("s9_RUC_long.txt.gz"), header = T, sep="\t")
+s10_RUC_long_df<-read.table(gzfile("s10_RUC_long.txt.gz"), header = T, sep="\t")
+s11_RUC_long_df<-read.table(gzfile("s11_RUC_long.txt.gz"), header = T, sep="\t")
+s12_RUC_long_df<-read.table(gzfile("s12_RUC_long.txt.gz"), header = T, sep="\t")
+s13_RUC_long_df<-read.table(gzfile("s13_RUC_long.txt.gz"), header = T, sep="\t")
+s14_RUC_long_df<-read.table(gzfile("s14_RUC_long.txt.gz"), header = T, sep="\t")
+s15_RUC_long_df<-read.table(gzfile("s15_RUC_long.txt.gz"), header = T, sep="\t")
+
+# a function to plot the object in double log
+plot_knee<-function(in_df, cell_range, vline_1, vline_2){
+  RUC<-in_df %>%
+    group_by(bc) %>% 
+    summarise(tot_UMI=sum(RUC)) %>% 
+    arrange(desc(tot_UMI)) %>% 
+    mutate(rank=1:nrow(.)) %>% 
+    select(rank, tot_UMI)
+  
+  p<-ggplot(RUC[cell_range,], aes(x=log(rank), y=(log(tot_UMI)))) +
+    geom_point() +
+    geom_vline(xintercept = log(vline_1)) +
+    geom_vline(xintercept = log(vline_2))
+  
+  return(p)
+}
+
+
+plot_knee(in_df = s15_RUC_long_df, cell_range = 1:600, vline_1 = 3, vline_2 = 307)
+```
+
+
+
+```{r, warning=FALSE, message=FALSE}
+select_cells<-function(in_df, from=1, to=300){
+  selected_barcodes<-in_df %>%
+    group_by(bc) %>% 
+    summarise(tot_UMI=sum(RUC)) %>% 
+    arrange(desc(tot_UMI)) %>% 
+    mutate(rank=1:nrow(.)) %>% 
+    filter(rank>=from, rank<=to) %>% 
+    `$`(bc)
+  
+  out_df<-in_df %>% 
+    filter(bc %in% selected_barcodes)
+  
+  return(out_df)
+}
+
+s1_RUC_long_df<-select_cells(s1_RUC_long_df, from = 5, to = 120)
+s2_RUC_long_df<-select_cells(s2_RUC_long_df, from = 3, to = 160)
+s3_RUC_long_df<-select_cells(s3_RUC_long_df, from = 9, to = 188)
+s4_RUC_long_df<-select_cells(s4_RUC_long_df, from = 7, to = 375)
+s5_RUC_long_df<-select_cells(s5_RUC_long_df, from = 7, to = 323)
+
+s6_RUC_long_df<-select_cells(s6_RUC_long_df, from = 14, to = 314)
+s7_RUC_long_df<-select_cells(s7_RUC_long_df, from = 7, to = 250)
+s8_RUC_long_df<-select_cells(s8_RUC_long_df, from = 6, to = 249)
+s9_RUC_long_df<-select_cells(s9_RUC_long_df, from = 3, to = 258)
+s10_RUC_long_df<-select_cells(s10_RUC_long_df, from = 12, to = 304)
+
+s11_RUC_long_df<-select_cells(s11_RUC_long_df, from = 6, to = 282)
+s12_RUC_long_df<-select_cells(s12_RUC_long_df, from = 7, to = 310)
+s13_RUC_long_df<-select_cells(s13_RUC_long_df, from = 8, to = 304)
+s14_RUC_long_df<-select_cells(s14_RUC_long_df, from = 8, to = 230)
+s15_RUC_long_df<-select_cells(s15_RUC_long_df, from = 3, to = 307)
+```
+
+The sample name is added to the barcode and the dataframes are merged into a single dataframe 
+```{r}
+Add_sample_name<-function(in_df, sname){
+  out_df<-in_df %>% 
+    mutate(Cell=paste(sname, bc, sep="_")) %>% 
+    select(Cell, Gene, RUC)
+  
+  return(out_df)
+}
+
+s1_RUC_long_df<-Add_sample_name(s1_RUC_long_df, "s1")
+s2_RUC_long_df<-Add_sample_name(s2_RUC_long_df, "s2")
+s3_RUC_long_df<-Add_sample_name(s3_RUC_long_df, "s3")
+s4_RUC_long_df<-Add_sample_name(s4_RUC_long_df, "s4")
+s5_RUC_long_df<-Add_sample_name(s5_RUC_long_df, "s5")
+s6_RUC_long_df<-Add_sample_name(s6_RUC_long_df, "s6")
+s7_RUC_long_df<-Add_sample_name(s7_RUC_long_df, "s7")
+s8_RUC_long_df<-Add_sample_name(s8_RUC_long_df, "s8")
+s9_RUC_long_df<-Add_sample_name(s9_RUC_long_df, "s9")
+s10_RUC_long_df<-Add_sample_name(s10_RUC_long_df, "s10")
+s11_RUC_long_df<-Add_sample_name(s11_RUC_long_df, "s11")
+s12_RUC_long_df<-Add_sample_name(s12_RUC_long_df, "s12")
+s13_RUC_long_df<-Add_sample_name(s13_RUC_long_df, "s13")
+s14_RUC_long_df<-Add_sample_name(s14_RUC_long_df, "s14")
+s15_RUC_long_df<-Add_sample_name(s15_RUC_long_df, "s15")
+
+PSC_timecourse_15s_RUC_long<-bind_rows(s1_RUC_long_df, s2_RUC_long_df, s3_RUC_long_df, s4_RUC_long_df, s5_RUC_long_df, s6_RUC_long_df, s7_RUC_long_df, s8_RUC_long_df, s9_RUC_long_df, s10_RUC_long_df, s11_RUC_long_df, s12_RUC_long_df, s13_RUC_long_df, s14_RUC_long_df, s15_RUC_long_df)
+
+```
+
+```{r}
+PSC_timecourse_15s_RUC_long<-read.table("Arch/CPUC_long.txt", header = T) %>% 
+  separate(Gene, into = c(NA, "Gene"), sep="_") %>% 
+  mutate(Cell=str_replace(Cell, "S", "s"))
+```
+
+
+The genes are re-ordered according to the gene_md table, i.e by chromosome position. Cell order is kept as descending frequency for samples s1-s15. The gene_ID is re-introduced. The code for making of the gene metadata table `Musmu_GRCm38.100_protcod_fd_Gene_md.txt` is described in `Mouse_genome_GRCm38.100_26Feb2024.Rmd`
+```{r}
+Sample_rank<-tibble(Sample=paste("s", 1:15, sep=""), sample_rank=1:15)
+
+sorted_genes<-read.table("Musmu_GRCm38.100_protcod_fd_Gene_md.txt") %>% 
+  select(EnsID=V1, Gene=V2) %>% 
+  mutate(gene_rank=1:nrow(.))
+
+PSC_timecourse_15s_RUC_long<-PSC_timecourse_15s_RUC_long %>% 
+  separate(Cell, into = c("Sample", "bc"), sep="_", remove = F) %>% 
+  group_by(Cell) %>% 
+  mutate(totUMI=sum(RUC)) %>% 
+  ungroup() %>% 
+  left_join(Sample_rank, by="Sample") %>% 
+  left_join(sorted_genes, by="Gene") %>% 
+  arrange(sample_rank, desc(totUMI), gene_rank) %>% 
+  mutate(Gene=paste(EnsID, Gene, sep = "_")) %>% 
+  select(Cell, Gene, RUC)
+```
+
+
+```{r}
+write.table(PSC_timecourse_15s_RUC_long, file = "PSC_timecourse_15s_RUC_long.txt", quote = F, row.names = F, col.names = T, sep = "\t")
+```
+
+
+# Converting to MEX and h5
+The long count dataframe is converted to MEX format. 
+The full list of genes is provided to include genes with 0 counts absent from the long dataframe. 
+The input Gene format should be like GeneID_GeneName
+```{r}
+library(Matrix)
+
+df_to_MEX<-function(in_df, rootname, full_gene_list) {
+  barcodes <- unique(in_df$Cell)
+  
+  features <- full_gene_list
+  
+  features_df<-tibble(Feature=features) %>%  
+    separate(Feature, into = c("EnsID", "Gene"), sep="_")
+  
+  barcode_dict <- setNames(seq_along(barcodes), barcodes)
+  feature_dict <- setNames(seq_along(features), features)
+  
+  df <- in_df %>%
+    mutate(row = feature_dict[Gene], col = barcode_dict[Cell])
+  
+  sparse_matrix <- sparseMatrix(i = df$row, j = df$col, x = df$RUC, dims = c(length(features), length(barcodes)))
+  
+  dir.create(rootname)
+  
+  temp_matrix_file <- tempfile()
+  writeMM(sparse_matrix, file = temp_matrix_file)
+  gz_matrix_file <- gzfile(paste(rootname, "/matrix.mtx.gz", sep=""), "wb")
+  writeBin(readBin(temp_matrix_file, raw(), file.info(temp_matrix_file)$size), gz_matrix_file)
+  close(gz_matrix_file)
+  
+  write.table(barcodes, file = gzfile(paste(rootname, "/barcodes.tsv.gz", sep="")), quote = FALSE, row.names = FALSE, col.names = FALSE)
+  write.table(features_df, file = gzfile(paste(rootname, "/features.tsv.gz", sep="")), quote = FALSE, row.names = FALSE, col.names = FALSE, sep="\t")
+}
+
+
+df_to_MEX(PSC_timecourse_15s_RUC_long, "PSC_timecourse_15s_Raw_UMI_Count", paste(sorted_genes$EnsID, sorted_genes$Gene, sep="_"))
+
+
+```
+
+converting to h5
+```{r}
+library(Seurat)
+library(DropletUtils)
+library(tidyverse)
+
+PSC_tc_15s_counts<-DropletUtils::read10xCounts(samples = "PSC_timecourse_15s_Raw_UMI_Count/")
+
+colnames(PSC_tc_15s_counts)<-readLines(file.path("PSC_timecourse_15s_Raw_UMI_Count", "barcodes.tsv.gz"))
+
+features<-read.delim(file.path("PSC_timecourse_15s_Raw_UMI_Count", "features.tsv.gz"), header = FALSE, stringsAsFactors = FALSE)
+
+DropletUtils::write10xCounts(path = "PSC_timecourse_15s_Raw_UMI_Count.h5", x = counts(PSC_tc_15s_counts),  gene.id = features[,1], gene.symbol = features[,2], type = "HDF5")
+
+# verify it can load 
+SO_h5<-CreateSeuratObject(Read10X_h5("PSC_timecourse_15s_Raw_UMI_Count.h5"))
+
+
+
+```
+
+
+
+
