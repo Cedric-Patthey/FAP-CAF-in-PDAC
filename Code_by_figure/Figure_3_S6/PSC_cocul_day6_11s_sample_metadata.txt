@@ -1,0 +1,12 @@
+Sample	Sample_name	Sort_date	Library_bioanal_date	ddSeq_lane	Initial_name	adapter	Run	Cell_line	Culture_type	Batch
+s1	Psc5CoA1	21 February 2018	23 February 2018	2	Psc5 (mT3) Co R1	N706	A	PSC5	Co-culture	A
+s2	Psc5CoA2	21 February 2018	23 February 2018	3	Psc5 (mT3) Co R2	N707	A	PSC5	Co-culture	A
+s3	Psc5CoA3	21 February 2018	23 February 2018	4	Psc5 (mT3) Co R3	N710	A	PSC5	Co-culture	A
+s4	Psc4monoB	13 March 2018	16 March 2018	5	Psc4 mono	N716	B	PSC4	Mono-culture	B
+s5	Psc4CoB1	13 March 2018	16 March 2018	6	Psc4 (mT5) Co R1	N718	B	PSC4	Co-culture	B
+s6	Psc4CoB2	13 March 2018	16 March 2018	7	Psc4 (mT5) Co R2	N719	B	PSC4	Co-culture	B
+s7	Psc4CoB3	13 March 2018	16 March 2018	8	Psc4 (mT5) Co R3	N720	B	PSC4	Co-culture	B
+s8	Psc5monoC	21 March 2018	16 April 2018	1	Psc5 mono	N721	C	PSC5	Mono-culture	C
+s9	Psc5CoC1	21 March 2018	16 April 2018	2	Psc5 (mT3) Co R1	N722	C	PSC5	Co-culture	C
+s10	Psc5CoC2	21 March 2018	16 April 2018	3	Psc5 (mT3) Co R2	N723	C	PSC5	Co-culture	C
+s11	Psc5CoC3	21 March 2018	16 April 2018	4	Psc5 (mT3) Co R3	N724	C	PSC5	Co-culture	C

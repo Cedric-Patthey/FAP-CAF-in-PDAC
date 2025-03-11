@@ -1,0 +1,1219 @@
+---
+title: "PSC_cocul_11s_clustering"
+author: "Joshua"
+date: "1/12/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Summary
+The following code describes the analysis of mouse single cell RNAseq data from co-cultures pancreatic stellate cells (PSC) in the presence of tumour organids. This code was used to produce figures 3 and S6 of Cumming et al, 2025. 
+
+The input data is the raw UMI count from the single cell RNA-seq data generated with ddSeq for 11 samples of PSC extracted from co-cultures at day 6. The raw UMI count is available on ArrayExpress with acession number E-MTAB-14944. 
+
+The code to generate the raw umi count is described in an Rmd called `PSC_cocul_day6_11s_scSeq_fastq_to_count.Rmd`
+
+The Sample metadata required was prepared manually and is available in the file PSC_cocul_day6_11s_scSeq_Sample_md.txt
+
+# Dependencies
+```{r}
+library(tidyverse) 
+library(Seurat)  # version 4.1.0
+library(SeuratObject)
+library(DoubletFinder)  # version 2.0.3
+library(cowplot)
+library(SCPA)  # version 1.5.3
+library(msigdbr)  # version 7.5.1
+library(decoupleR)  # version 2.0.1
+library(pheatmap)  # version 1.0.12
+library(RColorBrewer)
+```
+
+# Loading of data and metadata
+The raw UMI count is loaded to a seurat object
+```{r}
+Cocul_11s_SO <- CreateSeuratObject(counts = Read10X_h5(filename = "PSC_cocul_day6_11s_Raw_UMI_Count.h5"))
+```
+
+The sample metadata is loaded and integrated in the Seurat object
+```{r}
+Sample_md<-tibble(Sample=paste("s", 1:11, sep = ""), Run=c("A", "A", "A", "B", "B", "B", "B", "C", "C", "C", "C"), Batch=c("A", "A", "A", "B", "B", "B", "B", "C", "C", "C", "C"), Cell_line=c("PSC5", "PSC5", "PSC5", "PSC4",  "PSC4", "PSC4", "PSC4", "PSC5", "PSC5", "PSC5", "PSC5"), Culture_type=c("Co-culture", "Co-culture", "Co-culture", "Mono-culture", "Co-culture", "Co-culture", "Co-culture", "Mono-culture", "Co-culture", "Co-culture", "Co-culture"))
+
+Cocul_11s_SO@meta.data<-Cocul_11s_SO@meta.data %>% 
+  rownames_to_column("Cell") %>% 
+  mutate(Sample=orig.ident) %>% 
+  left_join(Sample_md, by="Sample") %>% 
+  mutate(Sample=factor(Sample, levels=paste("s", as.character(1:11), sep=""))) %>% 
+  column_to_rownames("Cell")
+```
+
+# Quality control metrics
+The percentage of mitochondrial reads is calculated. The UMI count, number of genes and percentage mitochondrial reads are observed.
+```{r}
+Cocul_11s_SO[["percent.mt"]] <- PercentageFeatureSet(Cocul_11s_SO, pattern = "^mt-")
+
+VlnPlot(Cocul_11s_SO, features = c("nFeature_RNA"), split.by = "Run", group.by = "Sample")
+VlnPlot(Cocul_11s_SO, features = c("nCount_RNA"), split.by = "Run", group.by = "Sample")
+VlnPlot(Cocul_11s_SO, features = c("percent.mt"), split.by = "Run", group.by = "Sample")
+```
+
+
+
+# Normalization and dimensionality reduction
+The seurat object is split into 3 objects by batch (i.e Run_A, Run_B and Run_C)
+```{r}
+Cocul_3SO_list<-SplitObject(Cocul_11s_SO, split.by = "Run")
+```
+
+The normalization and dimensionality reduction is run in the same way on all 3 objects. Clusters and UMAP are also calculated with same parameters
+```{r}
+for (i in 1:3) {
+  Cocul_3SO_list[[i]] <- NormalizeData(Cocul_3SO_list[[i]], normalization.method = "LogNormalize", scale.factor = 10000)
+  Cocul_3SO_list[[i]] <- FindVariableFeatures(Cocul_3SO_list[[i]], selection.method = "vst", nfeatures = 2000)
+  Cocul_3SO_list[[i]] <- ScaleData(Cocul_3SO_list[[i]], features = rownames(Cocul_3SO_list[[i]]))
+  Cocul_3SO_list[[i]] <- RunPCA(Cocul_3SO_list[[i]], features = VariableFeatures(object = Cocul_3SO_list[[i]]))
+  Cocul_3SO_list[[i]] <- FindNeighbors(Cocul_3SO_list[[i]], dims = 1:20)
+  Cocul_3SO_list[[i]] <- FindClusters(Cocul_3SO_list[[i]], resolution = 1.2)
+  Cocul_3SO_list[[i]] <- RunUMAP(Cocul_3SO_list[[i]], dims = 1:20)
+}
+
+PSC5_RunA<-Cocul_3SO_list[[1]]
+PSC4_RunB<-Cocul_3SO_list[[2]]
+PSC5_RunC<-Cocul_3SO_list[[3]]
+
+```
+
+The PCA and umap are observed
+```{r}
+DimPlot(PSC5_RunA, reduction = "pca")
+DimPlot(PSC5_RunA, reduction = "umap")
+DimPlot(PSC4_RunB, reduction = "pca")
+DimPlot(PSC4_RunB, reduction = "umap")
+DimPlot(PSC5_RunC, reduction = "pca")
+DimPlot(PSC5_RunC, reduction = "umap")
+```
+
+# Doublet removal
+The cell doublets are removed with DoubletFinder. The functions in later versions are called paramSweep() and doubletFinder() instead of paramSweep_v3() and doubletFinder_v3()
+```{r}
+sweep.res.A <- paramSweep_v3(PSC5_RunA) 
+sweep.res.A <- summarizeSweep(sweep.res.A, GT = FALSE) 
+bcmvn.A <- find.pK(sweep.res.A)
+nExp <- round(ncol(PSC5_RunA) * 0.05)  # expected doublets
+PSC5_RunA <- doubletFinder_v3(PSC5_RunA, pN = 0.25, pK = 0.12, nExp = nExp, PCs = 1:10)  # pK value after bcmvn peak
+DF.name.A = colnames(PSC5_RunA@meta.data)[grepl("DF.classification", colnames(PSC5_RunA@meta.data))]
+
+cowplot::plot_grid(ncol = 2, DimPlot(PSC5_RunA, group.by = "ident") + NoAxes(), DimPlot(PSC5_RunA, group.by = DF.name.A) + NoAxes())
+VlnPlot(PSC5_RunA, features = "nFeature_RNA", group.by = DF.name.A, pt.size = 1)
+
+PSC5_RunA_singlets = PSC5_RunA[, PSC5_RunA@meta.data[, DF.name.A] == "Singlet"]
+DimPlot(PSC5_RunA_singlets, reduction = "umap")
+VlnPlot(PSC5_RunA_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA")
+#saveRDS(PSC5_RunA_singlets, "PSC5_RunA_singlets.rds")
+```
+
+```{r}
+sweep.res.B <- paramSweep_v3(PSC4_RunB) 
+sweep.res.B <- summarizeSweep(sweep.res.B, GT = FALSE) 
+bcmvn.B <- find.pK(sweep.res.B)
+nExp <- round(ncol(PSC4_RunB) * 0.05)  # expected doublets
+PSC4_RunB <- doubletFinder_v3(PSC4_RunB, pN = 0.25, pK = 0.05, nExp = nExp, PCs = 1:10) # pK value after bcmvn peak
+DF.name.B = colnames(PSC4_RunB@meta.data)[grepl("DF.classification", colnames(PSC4_RunB@meta.data))]
+
+cowplot::plot_grid(ncol = 2, DimPlot(PSC4_RunB, group.by = "ident") + NoAxes(), DimPlot(PSC4_RunB, group.by = DF.name.B) + NoAxes())
+VlnPlot(PSC4_RunB, features = "nFeature_RNA", group.by = DF.name.B, pt.size = 1)
+
+PSC4_RunB_singlets = PSC4_RunB[, PSC4_RunB@meta.data[, DF.name.B] == "Singlet"]
+DimPlot(PSC4_RunB_singlets, reduction = "umap")
+VlnPlot(PSC4_RunB_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA")
+#saveRDS(PSC4_RunB_singlets, "PSC4_RunB_singlets.rds")
+```
+
+```{r}
+sweep.res.C <- paramSweep_v3(PSC5_RunC) 
+sweep.res.C <- summarizeSweep(sweep.res.C, GT = FALSE) 
+bcmvn.C <- find.pK(sweep.res.C)
+nExp <- round(ncol(PSC5_RunC) * 0.05)  # expected doublets
+PSC5_RunC <- doubletFinder_v3(PSC5_RunC, pN = 0.25, pK = 0.12, nExp = nExp, PCs = 1:10)  # pK value after bcmvn peak
+DF.name.C = colnames(PSC5_RunC@meta.data)[grepl("DF.classification", colnames(PSC5_RunC@meta.data))]
+
+cowplot::plot_grid(ncol = 2, DimPlot(PSC5_RunC, group.by = "ident") + NoAxes(), DimPlot(PSC5_RunC, group.by = DF.name.C) + NoAxes())
+VlnPlot(PSC5_RunC, features = "nFeature_RNA", group.by = DF.name.C, pt.size = 1)
+
+PSC5_RunC_singlets = PSC5_RunC[, PSC5_RunC@meta.data[, DF.name.C] == "Singlet"]
+DimPlot(PSC5_RunC_singlets, reduction = "umap")
+VlnPlot(PSC5_RunC_singlets, features = c("nCount_RNA", "nFeature_RNA", "percent.mt"), assay = "RNA")
+#saveRDS(PSC5_RunC_singlets, "PSC5_RunC_singlets.rds")
+```
+
+
+# Integration
+batches A, B and C are integrated. Cell cycle is regressed. 
+```{r}
+PSC.singlets <- merge(x = PSC5_RunA_singlets, y = list(PSC4_RunB_singlets, PSC5_RunC_singlets))
+
+PSC.singlets@meta.data<-PSC.singlets@meta.data %>% 
+  mutate(Batch=Run) 
+
+#saveRDS(PSC.singlets, "PSC.singlets.RDS")
+```
+
+Cell cycle genes described by the Regev lab are used
+```{r}
+mouse.s.genes<-c("Mcm5" ,"Pcna", "Tyms", "Fen1", "Mcm2", "Mcm4", "Rrm1", "Ung", "Gins2", "Mcm6", "Cdca7", "Dtl", "Prim1", "Uhrf1", "Hells", "Rfc2", "Rpa2", "Nasp", "Rad51ap1", "Gmnn", "Wdr76", "Slbp", "Ccne2", "Ubr7", "Msh2", "Rad51", "Rrm2", "Cdc45", "Cdc6", "Exo1", "Tipin", "Dscc1", "Blm", "Casp8ap2", "Usp1", "Clspn", "Pola1", "Chaf1b", "Brip1", "E2f8")
+
+mouse.g2m.genes<-c("Hmgb2", "Cdk1", "Nusap1", "Ube2c", "Birc5", "Tpx2", "Top2a", "Ndc80", "Cks2", "Nuf2", "Cks1b", "Mki67", "Tmpo", "Cenpf", "Tacc3", "Smc4", "Ccnb2", "Ckap2l", "Ckap2", "Aurkb", "Bub1", "Kif11", "Anp32e", "Tubb4b", "Gtse1", "Kif20b", "Hjurp", "Cdca3", "Cdc20", "Ttk", "Cdc25c", "Kif2c", "Rangap1", "Ncapd2", "Dlgap5", "Cdca2", "Cdca8", "Ect2", "Kif23", "Hmmr", "Aurka", "Psrc1", "Anln", "Lbr", "Ckap5", "Cenpe", "Ctcf", "Nek2", "G2e3", "Gas2l3", "Cbx5", "Cenpa")
+```
+
+Intergation with reciprocal PCA (rPCA)
+```{r}
+sample.list <- SplitObject(PSC.singlets, split.by = "Batch")
+
+for (i in 1:3) {
+    sample.list[[i]] <- NormalizeData(sample.list[[i]])
+    sample.list[[i]] <- FindVariableFeatures(sample.list[[i]], selection.method = "vst", nfeatures = 3000)
+}
+
+int_features <- SelectIntegrationFeatures(object.list = sample.list, nfeatures = 3000)
+
+for (i in 1:3) {
+    sample.list[[i]] <- CellCycleScoring(sample.list[[i]], s.features = mouse.s.genes, g2m.features = mouse.g2m.genes, set.ident = TRUE)
+    sample.list[[i]] <- ScaleData(sample.list[[i]], vars.to.regress = c("S.Score", "G2M.Score"), features = int_features, verbose = FALSE)
+    sample.list[[i]] <- RunPCA(sample.list[[i]], features = int_features, verbose = FALSE)
+}
+
+sample.anchors <- FindIntegrationAnchors(object.list = sample.list, anchor.features = int_features, reduction = "rpca")
+PSC.singlets.rPCA.integrated <- IntegrateData(anchorset = sample.anchors)
+DefaultAssay(PSC.singlets.rPCA.integrated) <- "integrated"
+PSC.singlets.rPCA.integrated <- ScaleData(PSC.singlets.rPCA.integrated, vars.to.regress = c("S.Score", "G2M.Score"), verbose = FALSE)
+PSC.singlets.rPCA.integrated <- RunPCA(PSC.singlets.rPCA.integrated, npcs = 50, verbose = FALSE)
+ElbowPlot(PSC.singlets.rPCA.integrated, ndims = 50)
+
+# Determine percent of variation associated with each PC
+pct <- PSC.singlets.rPCA.integrated@reductions$pca@stdev / sum(PSC.singlets.rPCA.integrated@reductions$pca@stdev) * 100
+
+# Determine the difference between variation of PC and subsequent PC
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1),  decreasing = T)[1] + 1 # last point where change of % of variation is more than 0.1%.
+  
+PSC.singlets.rPCA.integrated <- RunUMAP(PSC.singlets.rPCA.integrated, reduction = "pca", dims = 1:13)
+PSC.singlets.rPCA.integrated <- FindNeighbors(PSC.singlets.rPCA.integrated, reduction = "pca", dims = 1:13)
+PSC.singlets.rPCA.integrated <- FindClusters(PSC.singlets.rPCA.integrated, resolution = 0.6)
+
+
+DimPlot(PSC.singlets.rPCA.integrated, reduction = "umap", group.by = "Batch")
+DimPlot(PSC.singlets.rPCA.integrated, reduction = "umap", group.by = "Culture_type")
+DimPlot(PSC.singlets.rPCA.integrated, reduction = "umap", label = T, pt.size = 1)
+VlnPlot(PSC.singlets.rPCA.integrated, features = c("Lss", "Myl9", "Tagln"), assay = "RNA")
+```
+
+```{r}
+#saveRDS(PSC.singlets.rPCA.integrated, "PSC.singlets.rPCA.integrated.RDS")
+```
+
+
+# Figure3B - UMAP Co-culture
+```{r}
+PSC.singlets.rPCA.integrated <- readRDS("PSC.singlets.rPCA.integrated.RDS")
+
+Fig3B_dimplot <- DimPlot(PSC.singlets.rPCA.integrated, reduction = "umap", label = T, pt.size = 1)
+
+if (!dir.exists("Figure_3")) {dir.create("Figure_3")}
+ggsave(plot = Fig3B_dimplot, filename = "Figure_3B_UMAP.pdf", width = 7.5, height = 4.4444444, units = "in", path = "Figure_3/", device = "pdf")
+```
+
+```{r}
+get_RNA_markers<-function(SO, id1, logfc_cutoff=0.585, min_pct_cutoff=0.25, padj_cutoff=0.05){
+  markers_df<-FindMarkers(SO, ident.1 = id1, assay = "RNA", logfc.threshold = logfc_cutoff, min.pct = min_pct_cutoff, only.pos = T)
+  markers_df<-markers_df %>% filter(p_val_adj<padj_cutoff)
+  return(markers_df)
+}
+
+Cluster.0.Markers<-get_RNA_markers(SO=PSC.singlets.rPCA.integrated, id1 = "0")
+Cluster.1.Markers<-get_RNA_markers(SO=PSC.singlets.rPCA.integrated, id1 = "1")
+Cluster.2.Markers<-get_RNA_markers(SO=PSC.singlets.rPCA.integrated, id1 = "2")
+Cluster.3.Markers<-get_RNA_markers(SO=PSC.singlets.rPCA.integrated, id1 = "3")
+Cluster.4.Markers<-get_RNA_markers(SO=PSC.singlets.rPCA.integrated, id1 = "4")
+Cluster.5.Markers<-get_RNA_markers(SO=PSC.singlets.rPCA.integrated, id1 = "5")
+```
+
+```{r}
+PSC.singlets.rPCA.integrated@active.ident <- factor(x = PSC.singlets.rPCA.integrated@active.ident, levels = c('3', '5', '0', '2', '1', '4'))
+```
+
+An annotation is given to the clusters manually
+```{r}
+PSC.singlets.rPCA.integrated@meta.data <- PSC.singlets.rPCA.integrated@meta.data %>%
+  mutate(Annotation = case_when(
+    integrated_snn_res.0.6 == "0" ~ "iCAFs",
+    integrated_snn_res.0.6 == "1" ~ "myCAFs",
+    integrated_snn_res.0.6 == "2" ~ "Crabp1+ CAFs",
+    integrated_snn_res.0.6 == "3" ~ "qPSCs 1",
+    integrated_snn_res.0.6 == "4" ~ "ifCAFs",
+    integrated_snn_res.0.6 == "5" ~ "qPSCs 2"
+  ))
+```
+
+
+```{r}
+#saveRDS(PSC.singlets.rPCA.integrated, "PSC.singlets.rPCA.integrated.RDS")
+#write.table(PSC.singlets.rPCA.integrated@meta.data, "PSC.singlets.rPCA.integrated.Meta.Data.txt", sep = "\t")
+```
+
+
+# Figure 3C - plot PSC and CAF markers
+```{r}
+Fig3C_dotplot <- DotPlot(PSC.singlets.rPCA.integrated, assay = "RNA", col.min = 0, features = c( "Lpl", "Apoe", "Oxct1", "Ccn3", "Myl9", "Tagln", "Ptgs2", "Cxcl1", "Cxcl5", "Crabp1", "Il1rl1", "Spp1", "Acta2", "Col5a3", "Postn", "Cxcl10", "Rsad2", "Ifit3"), cols = c("white", "blue")) + theme(axis.text.x = element_text(angle = 45, hjust=1))
+
+if (!dir.exists("Figure_3")) {dir.create("Figure_3")}
+ggsave(plot = Fig3C_dotplot, "Figure_3C_Dotplot_Cluster_markers.pdf", width = 7.5*0.9, height = 4.4444444*0.9, units = "in", path = "Figure_3/")
+```
+
+
+# Integration of qPSCs from monoculture in vitro and normal mesenchymal cells from the human pancreas in vivo
+The raw umi count (RUC) is extracted from the object generated above for mouse PSC. Gene names are converted to human ortholog using orthology table. The making of the orthology table is described in R markdown `Human_mouse_orthology_table_26Nov2019.Rmd`. The Seurat object `PSC.singlets.rPCA.integrated.RDS` is available on ArrayExpress with acession number E-MTAB-14944. 
+```{r}
+PSC.singlets.rPCA.integrated <- readRDS("PSC.singlets.rPCA.integrated.RDS")
+
+RUC_PSC.singlets <- PSC.singlets.rPCA.integrated@assays$RNA@counts %>% 
+  as.data.frame() %>% 
+  rownames_to_column("Musmu_gene_name")
+
+Orthology.table.genes <- read.table("Human_mouse_orthology_v1.txt", header = T) %>% 
+    select(Homsa_gene_name, Musmu_gene_name)
+
+RUC_PSC.singlets <- RUC_PSC.singlets %>% 
+  filter(Musmu_gene_name %in% Orthology.table.genes$Musmu_gene_name)
+
+RUC_PSC.singlets.Homsa.Genes <- RUC_PSC.singlets %>%
+  left_join(Orthology.table.genes, by = "Musmu_gene_name") %>%
+  select(-Musmu_gene_name) %>%
+  column_to_rownames("Homsa_gene_name") %>%
+  t() %>%
+  t()
+
+PSC.singlets.rPCA.integrated.Homsa.Genes <- CreateSeuratObject(counts = RUC_PSC.singlets.Homsa.Genes)
+
+PSC.singlets.rPCA.integrated.meta.data <- PSC.singlets.rPCA.integrated@meta.data %>%
+  select(c("Batch", "integrated_snn_res.0.6", "Culture_type")) %>%
+  mutate(Cluster = case_when(
+    integrated_snn_res.0.6 == "0" ~ "in vitro 0",
+    integrated_snn_res.0.6 == "1" ~ "in vitro 1",
+    integrated_snn_res.0.6 == "2" ~ "in vitro 2",
+    integrated_snn_res.0.6 == "3" ~ "in vitro 3",
+    integrated_snn_res.0.6 == "4" ~ "in vitro 4",
+    integrated_snn_res.0.6 == "5" ~ "in vitro 5")
+  ) %>%
+  select(c(Batch, Cluster, Culture_type)) %>%
+  rownames_to_column("Cell_ID")
+
+PSC.singlets.rPCA.integrated.Homsa.Genes@meta.data <- PSC.singlets.rPCA.integrated.Homsa.Genes@meta.data %>%
+  rownames_to_column("Cell_ID") %>%
+  left_join(PSC.singlets.rPCA.integrated.meta.data, by = "Cell_ID") %>%
+  column_to_rownames("Cell_ID")
+
+PSC.singlets.rPCA.integrated.Homsa.Genes <- SetIdent(PSC.singlets.rPCA.integrated.Homsa.Genes, value = PSC.singlets.rPCA.integrated.Homsa.Genes@meta.data$Cluster)
+```
+
+The cells from the monocolture are subsetted for integration with normal pancreas single cell data
+```{r}
+PSC.singlets.Monocul.Homsa.Genes <- subset(PSC.singlets.rPCA.integrated.Homsa.Genes, idents = c("in vitro 3", "in vitro 5"))
+
+#Remove batch with only one cell for further analysis
+PSC.singlets.Monocul.Homsa.Genes <- SetIdent(PSC.singlets.Monocul.Homsa.Genes, value = PSC.singlets.Monocul.Homsa.Genes@meta.data$Batch)
+
+PSC.singlets.Monocul.Homsa.Genes <- subset(PSC.singlets.Monocul.Homsa.Genes, idents = c("B", "C"))
+
+PSC.singlets.Monocul.Homsa.Genes <- SetIdent(PSC.singlets.Monocul.Homsa.Genes, value = PSC.singlets.Monocul.Homsa.Genes@meta.data$orig.ident)
+
+PSC.singlets.Monocul.Homsa.Genes@meta.data$Culture_type <- NULL
+
+
+```
+
+The single cell data from Olaniru et al, 2023 (PMID: 36513063) is pre-processed for integration. Here, we use the Seurat object `Olaniru.Developing.Panc.Mesenchymal.SO.integrated.RDS` generated during the re-analysis of the data in the present study, see code for figures 1-2. The raw data is available on GEO (accession number GSE197064).  
+```{r}
+Norm.Panc.Mesenchymal <- readRDS("Olaniru.Developing.Panc.Mesenchymal.SO.integrated.RDS")
+Norm.Panc.Mesenchymal.meta.data <- Norm.Panc.Mesenchymal@meta.data %>%
+  select(Sample, integrated_snn_res.0.1) %>%
+  mutate(Batch = case_when(
+    Sample == "S1" ~ "S1",
+    Sample == "S2" ~ "S2",
+    Sample == "S3" ~ "S3",
+    Sample == "S4" ~ "S4")
+  ) %>%
+  mutate(Cluster = case_when(
+    integrated_snn_res.0.1 == "0" ~ "in vivo 0",
+    integrated_snn_res.0.1 == "1" ~ "in vivo 1",
+    integrated_snn_res.0.1 == "2" ~ "in vivo 2",
+    integrated_snn_res.0.1 == "3" ~ "in vivo 3")
+  )  %>%
+  select(c(Batch, Cluster))
+  
+Norm.Panc.Mesenchymal <- Norm.Panc.Mesenchymal@assays$RNA@counts
+
+Keep.genes <- rownames(Norm.Panc.Mesenchymal) %in% rownames(PSC.singlets.Monocul.Homsa.Genes)
+Norm.Panc.Mesenchymal <- Norm.Panc.Mesenchymal[Keep.genes,]
+
+Keep.genes <- rownames(PSC.singlets.Monocul.Homsa.Genes) %in% rownames(Norm.Panc.Mesenchymal)
+PSC.singlets.Monocul.Homsa.Genes <- PSC.singlets.Monocul.Homsa.Genes[Keep.genes,]
+
+Norm.Panc.Mesenchymal <- CreateSeuratObject(Norm.Panc.Mesenchymal, meta.data = Norm.Panc.Mesenchymal.meta.data)
+in.vitro.in.vivo.normal <- merge(Norm.Panc.Mesenchymal, PSC.singlets.Monocul.Homsa.Genes)
+```
+
+```{r}
+human.s.genes<-c("MCM5", "PCNA", "TYMS", "FEN1", "MCM2", "MCM4", "RRM1", "UNG", "GINS2", "MCM6", "CDCA7", "DTL", "PRIM1", "UHRF1", "MLF1IP", "HELLS", "RFC2", "RPA2", "NASP", "RAD51AP1", "GMNN", "WDR76", "SLBP", "CCNE2", "UBR7", "POLD3", "MSH2", "ATAD2", "RAD51", "RRM2", "CDC45", "CDC6", "EXO1", "TIPIN", "DSCC1", "BLM", "CASP8AP2", "USP1", "CLSPN", "POLA1", "CHAF1B", "BRIP1", "E2F8") 
+
+human.g2m.genes<-c("HMGB2", "CDK1", "NUSAP1", "UBE2C", "BIRC5", "TPX2", "TOP2A", "NDC80", "CKS2", "NUF2", "CKS1B", "MKI67", "TMPO", "CENPF", "TACC3", "FAM64A", "SMC4", "CCNB2", "CKAP2L", "CKAP2", "AURKB", "BUB1", "KIF11", "ANP32E", "TUBB4B", "GTSE1", "KIF20B", "HJURP", "CDCA3", "HN1", "CDC20", "TTK", "CDC25C", "KIF2C", "RANGAP1", "NCAPD2", "DLGAP5", "CDCA2", "CDCA8", "ECT2", "KIF23", "HMMR", "AURKA", "PSRC1", "ANLN", "LBR", "CKAP5", "CENPE", "CTCF", "NEK2", "G2E3", "GAS2L3", "CBX5", "CENPA")
+
+Patient.list <- SplitObject(in.vitro.in.vivo.normal, split.by = "Batch")
+Patient.list <- lapply(X = Patient.list, FUN = function(x) {
+    x[["percent.mt"]] <- PercentageFeatureSet(x, pattern = "^MT-")
+    x <- NormalizeData(x)
+    x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 3000)
+})
+features <- SelectIntegrationFeatures(object.list = Patient.list, nfeatures = 3000)
+Patient.list <- lapply(X = Patient.list, FUN = function(x) {
+    x <- CellCycleScoring(x, s.features = human.s.genes, g2m.features = human.g2m.genes, set.ident = TRUE)
+    x <- ScaleData(x, vars.to.regress = c("S.Score", "G2M.Score"), features = features, verbose = FALSE)
+    x <- RunPCA(x, features = features, verbose = FALSE)
+})
+Patient.anchors <- FindIntegrationAnchors(object.list = Patient.list, anchor.features = features, reduction = "rpca", k.filter = NA)
+in.vitro.in.vivo.normal.integrated <- IntegrateData(anchorset = Patient.anchors, k.weight = 80)
+```
+
+```{r}
+DefaultAssay(in.vitro.in.vivo.normal.integrated) <- "integrated"
+in.vitro.in.vivo.normal.integrated <- ScaleData(in.vitro.in.vivo.normal.integrated, verbose = FALSE)
+in.vitro.in.vivo.normal.integrated <- RunPCA(in.vitro.in.vivo.normal.integrated, npcs = 50, verbose = FALSE)
+ElbowPlot(in.vitro.in.vivo.normal.integrated, ndims = 50)
+# Determine percent of variation associated with each PC
+pct <- in.vitro.in.vivo.normal.integrated@reductions$pca@stdev / sum(in.vitro.in.vivo.normal.integrated@reductions$pca@stdev) * 100
+# Determine the difference between variation of PC and subsequent PC
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1),  decreasing = T)[1] + 1 # last point where change of % of variation is more than 0.1%.
+in.vitro.in.vivo.normal.integrated <- RunUMAP(in.vitro.in.vivo.normal.integrated, reduction = "pca", dims = 1:13)
+in.vitro.in.vivo.normal.integrated <- FindNeighbors(in.vitro.in.vivo.normal.integrated, reduction = "pca", dims = 1:13)
+in.vitro.in.vivo.normal.integrated <- FindClusters(in.vitro.in.vivo.normal.integrated, resolution = 0.1)
+```
+
+```{r}
+in.vitro.in.vivo.normal.integrated@meta.data <- in.vitro.in.vivo.normal.integrated@meta.data %>%
+  mutate(Experiment = case_when(
+    Batch == "S1" ~ "in vivo",
+    Batch == "S2" ~ "in vivo",
+    Batch == "S3" ~ "in vivo",
+    Batch == "S4" ~ "in vivo",
+    Batch == "B" ~ "in vitro",
+    Batch == "C" ~ "in vitro")
+  )
+```
+
+```{r}
+#saveRDS(in.vitro.in.vivo.normal.integrated, "in.vitro.in.vivo.normal.integrated.RDS")
+```
+
+```{r}
+in.vitro.in.vivo.normal.integrated <- readRDS("in.vitro.in.vivo.normal.integrated.RDS")
+```
+
+#Figure 3D
+```{r}
+p1 <- DimPlot(in.vitro.in.vivo.normal.integrated, reduction = "umap", label = T) + 
+  ggtitle(label = "Normal Integration") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+Cell subtype annotation is extracted from the respective datasets
+```{r}
+PSC.singlets.rPCA.integrated <- readRDS("PSC.singlets.rPCA.integrated.RDS")
+Co.culture.annotation <- PSC.singlets.rPCA.integrated@meta.data %>%
+  select(integrated_snn_res.0.6) %>%
+  mutate(Gene.Expression.Annotation = case_when(
+    integrated_snn_res.0.6 == "0" ~ "iCAFs",
+    integrated_snn_res.0.6 == "1" ~ "myCAFs",
+    integrated_snn_res.0.6 == "2" ~ "Crabp1+ CAFs",
+    integrated_snn_res.0.6 == "3" ~ "qPSCs 1",
+    integrated_snn_res.0.6 == "4" ~ "ifCAFs",
+    integrated_snn_res.0.6 == "5" ~ "qPSCs 2")) %>%
+  select(Gene.Expression.Annotation)
+
+
+Norm.Panc.Mesenchymal <- readRDS("Olaniru.Developing.Panc.Mesenchymal.SO.integrated.RDS")
+
+Norm.Panc.Mesenchymal.Annotation <- Norm.Panc.Mesenchymal@meta.data %>%
+  select(integrated_snn_res.0.1) %>%
+  mutate(Gene.Expression.Annotation = case_when(
+    integrated_snn_res.0.1 == "0" ~ "A",
+    integrated_snn_res.0.1 == "1" ~ "B",
+    integrated_snn_res.0.1 == "2" ~ "C",
+    integrated_snn_res.0.1 == "3" ~ "D")) %>%
+  select(Gene.Expression.Annotation)
+
+In.vivo.in.vitro.normal.GE.annotation <- rbind(Norm.Panc.Mesenchymal.Annotation, Co.culture.annotation) %>%
+  rownames_to_column("Cell.ID")
+
+in.vitro.in.vivo.normal.integrated.meta.data <- in.vitro.in.vivo.normal.integrated@meta.data %>%
+  rownames_to_column("Cell.ID") %>%
+  left_join(In.vivo.in.vitro.normal.GE.annotation, by = "Cell.ID") %>%
+  column_to_rownames("Cell.ID")
+
+in.vitro.in.vivo.normal.integrated@meta.data <- in.vitro.in.vivo.normal.integrated.meta.data
+```
+
+```{r}
+in.vivo.in.vitro.in.vivo.normal.integrated <- subset(x = in.vitro.in.vivo.normal.integrated, subset = Experiment == "in vivo")
+
+in.vivo.in.vitro.in.vivo.normal.integrated@meta.data$Gene.Expression.Annotation <- factor(x = in.vivo.in.vitro.in.vivo.normal.integrated@meta.data$Gene.Expression.Annotation, levels = c('A', 'B', 'C', 'D'))
+```
+
+#Figure 3E
+```{r}
+all_combinations_in_vivo_normal<-expand.grid(Gene.Expression.Annotation=c("A", "B", "C", "D"), integrated_snn_res.0.1=0:3) %>%
+  mutate(integrated_snn_res.0.1=factor(integrated_snn_res.0.1))
+
+# Calculate the proportions
+in.vivo.gene.expr.anno.normal.cluster.props <- all_combinations_in_vivo_normal %>%
+  left_join(in.vivo.in.vitro.in.vivo.normal.integrated@meta.data, by = c("Gene.Expression.Annotation", "integrated_snn_res.0.1")) %>%
+  mutate(cell_count=ifelse(is.na(Batch), 0, 1)) %>%
+  select(Gene.Expression.Annotation, integrated_snn_res.0.1, cell_count) %>%
+  group_by(Gene.Expression.Annotation, integrated_snn_res.0.1) %>%
+  summarise(n= sum(cell_count)) %>%
+  group_by(Gene.Expression.Annotation) %>%
+  mutate(prop=n/sum(n))
+
+p2 <- ggplot(in.vivo.gene.expr.anno.normal.cluster.props, aes(x=integrated_snn_res.0.1, y=prop, fill=Gene.Expression.Annotation)) +
+  geom_bar(stat="identity", position="dodge") +
+  theme_bw() + 
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) + 
+    scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
+  xlab("de novo clusters") +
+  ylab("Proportion of cells") + 
+  scale_fill_manual(values = c("#E41A1C", "#377EB8", "#4DAF4A", "#984EA3"), name = "Annotation") +
+  ggtitle(label = "in vivo dataset") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r}
+in.vitro.in.vitro.in.vivo.normal.integrated <- subset(x = in.vitro.in.vivo.normal.integrated, subset = Experiment == "in vitro")
+in.vitro.in.vitro.in.vivo.normal.integrated@meta.data$Gene.Expression.Annotation <- factor(x = in.vitro.in.vitro.in.vivo.normal.integrated@meta.data$Gene.Expression.Annotation, levels = c('qPSCs 1', 'qPSCs 2'))
+```
+
+#Figure 3F
+```{r}
+all_combinations_in_vitro_normal<-expand.grid(Gene.Expression.Annotation=c("qPSCs 1", "qPSCs 2"), integrated_snn_res.0.1=0:3) %>%
+  mutate(integrated_snn_res.0.1=factor(integrated_snn_res.0.1))
+
+# Calculate the proportions
+in.vitro.monocul.gene.expr.anno.cluster.props <- all_combinations_in_vitro_normal %>%
+  left_join(in.vitro.in.vitro.in.vivo.normal.integrated@meta.data, by = c("Gene.Expression.Annotation", "integrated_snn_res.0.1")) %>%
+  mutate(cell_count=ifelse(is.na(Batch), 0, 1)) %>%
+  select(Gene.Expression.Annotation, integrated_snn_res.0.1, cell_count) %>%
+  group_by(Gene.Expression.Annotation, integrated_snn_res.0.1) %>%
+  summarise(n= sum(cell_count)) %>%
+  group_by(Gene.Expression.Annotation) %>%
+  mutate(prop=n/sum(n))
+
+ggplotColours <- function(n = 6, h = c(0, 360) + 15){
+  if ((diff(h) %% 360) < 1) h[2] <- h[2] - 360/n
+  hcl(h = (seq(h[1], h[2], length = n)), c = 100, l = 65)
+}
+
+color_list <- ggplotColours(n=6)
+
+p3 <- ggplot(in.vitro.monocul.gene.expr.anno.cluster.props, aes(x=integrated_snn_res.0.1, y=prop, fill=Gene.Expression.Annotation)) +
+  geom_bar(stat="identity", position="dodge") +
+  theme_bw() + 
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) + 
+    scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
+  xlab("de novo Clusters") +
+  ylab("Proportion of cells") + 
+  scale_fill_manual(values=c("#00BFC4", "#F564E3"), name = "Annotation") +
+  ggtitle(label = "in vitro dataset") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+```
+
+# Integration of CAFs from co-culture and human FAP CAF PDAC data
+The cells from the co-culture samples are extracted to integrate with the human PDAC CAF data
+```{r}
+PSC.singlets.rPCA.integrated.Homsa.Genes <- SetIdent(PSC.singlets.rPCA.integrated.Homsa.Genes, value = PSC.singlets.rPCA.integrated.Homsa.Genes@meta.data$Cluster)
+
+PSC.singlets.Cocul.Homsa.Genes <- subset(PSC.singlets.rPCA.integrated.Homsa.Genes, idents = c("in vitro 0", "in vitro 1", "in vitro 2", "in vitro 4"))
+
+PSC.singlets.Cocul.Homsa.Genes <- SetIdent(PSC.singlets.Cocul.Homsa.Genes, value = PSC.singlets.Cocul.Homsa.Genes@meta.data$orig.ident)
+
+PSC.singlets.Cocul.Homsa.Genes@meta.data$Culture_type <- NULL
+```
+
+The Human PDAC CAF single cell data (Figure 1B) is loaded. Here, we use the Seurat object `FAP.CAFs.Souped.Singlets.rPCA.integrated` generated in this study. The code for generating the integrated seurat object is described in the R markdown for figures 1-2.  The raw data and the Seurat object `FAP.CAFs.Souped.Singlets.rPCA.integrated.RDS` are available via SND at https://doi.org/10.5878/0ehq-1434.  
+```{r}
+FAP.CAFs <- readRDS("FAP.Mesenchymal.Souped.Singlets.rPCA.integrated.RDS")
+FAP.CAFs.meta.data <- FAP.CAFs@meta.data %>%
+  select(orig.ident, integrated_snn_res.0.1) %>%
+  mutate(Batch = case_when(
+    orig.ident == "S1" ~ "S1",
+    orig.ident == "S2" ~ "S2",
+    orig.ident == "S3" ~ "S3",
+    orig.ident == "S4" ~ "S4",
+    orig.ident == "S5" ~ "S5",
+    orig.ident == "S6" ~ "S6")
+  ) %>%
+  mutate(Cluster = case_when(
+    integrated_snn_res.0.1 == "0" ~ "in vivo 0",
+    integrated_snn_res.0.1 == "1" ~ "in vivo 1",
+    integrated_snn_res.0.1 == "2" ~ "in vivo 2",
+    integrated_snn_res.0.1 == "3" ~ "in vivo 3",
+    integrated_snn_res.0.1 == "4" ~ "in vivo 4")
+  )  %>%
+  select(c(Batch, Cluster))
+  
+FAP.CAFs <- FAP.CAFs@assays$RNA@counts
+
+Keep.Genes <- rownames(FAP.CAFs) %in% rownames(PSC.singlets.Cocul.Homsa.Genes)
+FAP.CAFs <- FAP.CAFs[Keep.Genes,]
+
+Keep.Genes <- rownames(PSC.singlets.Cocul.Homsa.Genes) %in% rownames(FAP.CAFs)
+PSC.singlets.Cocul.Homsa.Genes <- PSC.singlets.Cocul.Homsa.Genes[Keep.Genes,]
+
+FAP.CAFs <- CreateSeuratObject(FAP.CAFs, meta.data = FAP.CAFs.meta.data)
+
+in.vitro.in.vivo.cancer <- merge(FAP.CAFs, PSC.singlets.Cocul.Homsa.Genes)
+```
+
+```{r}
+human.s.genes<-c("MCM5", "PCNA", "TYMS", "FEN1", "MCM2", "MCM4", "RRM1", "UNG", "GINS2", "MCM6", "CDCA7", "DTL", "PRIM1", "UHRF1", "MLF1IP", "HELLS", "RFC2", "RPA2", "NASP", "RAD51AP1", "GMNN", "WDR76", "SLBP", "CCNE2", "UBR7", "POLD3", "MSH2", "ATAD2", "RAD51", "RRM2", "CDC45", "CDC6", "EXO1", "TIPIN", "DSCC1", "BLM", "CASP8AP2", "USP1", "CLSPN", "POLA1", "CHAF1B", "BRIP1", "E2F8") 
+
+human.g2m.genes<-c("HMGB2", "CDK1", "NUSAP1", "UBE2C", "BIRC5", "TPX2", "TOP2A", "NDC80", "CKS2", "NUF2", "CKS1B", "MKI67", "TMPO", "CENPF", "TACC3, FAM64A", "SMC4", "CCNB2", "CKAP2L", "CKAP2", "AURKB", "BUB1", "KIF11", "ANP32E", "TUBB4B", "GTSE1", "KIF20B", "HJURP", "CDCA3", "HN1", "CDC20", "TTK", "CDC25C", "KIF2C", "RANGAP1", "NCAPD2", "DLGAP5", "CDCA2", "CDCA8", "ECT2", "KIF23", "HMMR", "AURKA", "PSRC1", "ANLN", "LBR", "CKAP5", "CENPE", "CTCF", "NEK2", "G2E3", "GAS2L3", "CBX5", "CENPA")
+
+Patient.list <- SplitObject(in.vitro.in.vivo.cancer, split.by = "Batch")
+Patient.list <- lapply(X = Patient.list, FUN = function(x) {
+    x[["percent.mt"]] <- PercentageFeatureSet(x, pattern = "^MT-")
+    x <- NormalizeData(x)
+    x <- FindVariableFeatures(x, selection.method = "vst", nfeatures = 3000)
+})
+features <- SelectIntegrationFeatures(object.list = Patient.list, nfeatures = 3000)
+Patient.list <- lapply(X = Patient.list, FUN = function(x) {
+    x <- CellCycleScoring(x, s.features = s.genes, g2m.features = g2m.genes, set.ident = TRUE)
+    x <- ScaleData(x, vars.to.regress = c("S.Score", "G2M.Score"), features = features, verbose = FALSE)
+    x <- RunPCA(x, features = features, verbose = FALSE)
+})
+Patient.anchors <- FindIntegrationAnchors(object.list = Patient.list, anchor.features = features, reduction = "rpca")
+in.vitro.in.vivo.cancer.integrated <- IntegrateData(anchorset = Patient.anchors)
+```
+
+```{r}
+DefaultAssay(in.vitro.in.vivo.cancer.integrated) <- "integrated"
+in.vitro.in.vivo.cancer.integrated <- ScaleData(in.vitro.in.vivo.cancer.integrated, verbose = FALSE)
+in.vitro.in.vivo.cancer.integrated <- RunPCA(in.vitro.in.vivo.cancer.integrated, npcs = 50, verbose = FALSE)
+ElbowPlot(in.vitro.in.vivo.cancer.integrated, ndims = 50)
+# Determine percent of variation associated with each PC
+pct <- in.vitro.in.vivo.cancer.integrated@reductions$pca@stdev / sum(in.vitro.in.vivo.cancer.integrated@reductions$pca@stdev) * 100
+# Determine the difference between variation of PC and subsequent PC
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1),  decreasing = T)[1] + 1 # last point where change of % of variation is more than 0.1%.
+in.vitro.in.vivo.cancer.integrated <- RunUMAP(in.vitro.in.vivo.cancer.integrated, reduction = "pca", dims = 1:13)
+in.vitro.in.vivo.cancer.integrated <- FindNeighbors(in.vitro.in.vivo.cancer.integrated, reduction = "pca", dims = 1:13)
+in.vitro.in.vivo.cancer.integrated <- FindClusters(in.vitro.in.vivo.cancer.integrated, resolution = 0.1)
+```
+
+```{r}
+#saveRDS(in.vitro.in.vivo.cancer.integrated, "in.vitro.in.vivo.cancer.integrated.RDS")
+```
+
+```{r}
+in.vitro.in.vivo.cancer.integrated <- readRDS("in.vitro.in.vivo.cancer.integrated.RDS")
+```
+
+```{r}
+in.vitro.in.vivo.cancer.integrated@meta.data <- in.vitro.in.vivo.cancer.integrated@meta.data %>%
+  mutate(Experiment = case_when(
+    Batch == "S1" ~ "in vivo",
+    Batch == "S2" ~ "in vivo",
+    Batch == "S3" ~ "in vivo",
+    Batch == "S4" ~ "in vivo",
+    Batch == "S5" ~ "in vivo",
+    Batch == "S6" ~ "in vivo",
+    Batch == "A" ~ "in vitro",
+    Batch == "B" ~ "in vitro",
+    Batch == "C" ~ "in vitro")
+  )
+```
+
+#Figure 3G
+```{r}
+p4 <- DimPlot(in.vitro.in.vivo.cancer.integrated, reduction = "umap", label = T) + 
+  ggtitle(label = "PDAC Integration") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+```{r}
+PSC.singlets.rPCA.integrated <- readRDS("PSC.singlets.rPCA.integrated.RDS")
+Co.culture.annotation <- PSC.singlets.rPCA.integrated@meta.data %>%
+  select(integrated_snn_res.0.6) %>%
+  mutate(Gene.Expression.Annotation = case_when(
+    integrated_snn_res.0.6 == "0" ~ "iCAFs",
+    integrated_snn_res.0.6 == "1" ~ "myCAFs",
+    integrated_snn_res.0.6 == "2" ~ "Crabp1+ CAFs",
+    integrated_snn_res.0.6 == "3" ~ "qPSCs 1",
+    integrated_snn_res.0.6 == "4" ~ "ifCAFs",
+    integrated_snn_res.0.6 == "5" ~ "qPSCs 2")) %>%
+  select(Gene.Expression.Annotation)
+
+
+FAP.CAFs <- readRDS("FAP.CAFs.Souped.Singlets.rPCA.integrated.RDS")
+
+FAP.CAFs.Annotation <- FAP.CAFs@meta.data %>%
+  select(integrated_snn_res.0.1) %>%
+  mutate(Gene.Expression.Annotation = case_when(
+    integrated_snn_res.0.1 == "0" ~ "ENG+ CAFs",
+    integrated_snn_res.0.1 == "1" ~ "WT1+ CAFs",
+    integrated_snn_res.0.1 == "2" ~ "LRRC15+ CAFs",
+    integrated_snn_res.0.1 == "3" ~ "CAPs",
+    integrated_snn_res.0.1 == "4" ~ "Proliferating cells")) %>%
+  select(Gene.Expression.Annotation)
+
+In.vivo.in.vitro.cancer.GE.annotation <- rbind(FAP.CAFs.Annotation, Co.culture.annotation) %>%
+  rownames_to_column("Cell.ID")
+
+in.vitro.in.vivo.cancer.integrated.meta.data <- in.vitro.in.vivo.cancer.integrated@meta.data %>%
+  rownames_to_column("Cell.ID") %>%
+  left_join(In.vivo.in.vitro.cancer.GE.annotation, by = "Cell.ID") %>%
+  column_to_rownames("Cell.ID")
+
+in.vitro.in.vivo.cancer.integrated@meta.data <- in.vitro.in.vivo.cancer.integrated.meta.data
+```
+
+```{r}
+in.vivo.in.vitro.in.vivo.cancer.integrated <- subset(x = in.vitro.in.vivo.cancer.integrated, subset = Experiment == "in vivo")
+
+in.vivo.in.vitro.in.vivo.cancer.integrated@meta.data$Gene.Expression.Annotation <- factor(x = in.vivo.in.vitro.in.vivo.cancer.integrated@meta.data$Gene.Expression.Annotation, levels = c('ENG+ CAFs', 'WT1+ CAFs', 'LRRC15+ CAFs', 'CAPs', 'Proliferating cells'))
+```
+
+#Figure 3H
+```{r}
+all_combinations_in_vivo_cancer<-expand.grid(Gene.Expression.Annotation=c('ENG+ CAFs', 'WT1+ CAFs', 'LRRC15+ CAFs', 'CAPs', 'Proliferating cells'), integrated_snn_res.0.1=0:4) %>%
+  mutate(integrated_snn_res.0.1=factor(integrated_snn_res.0.1))
+
+# Calculate the proportions
+in.vivo.gene.expr.anno.cancer.cluster.props <- all_combinations_in_vivo_cancer %>%
+  left_join(in.vivo.in.vitro.in.vivo.cancer.integrated@meta.data, by = c("Gene.Expression.Annotation", "integrated_snn_res.0.1")) %>%
+  mutate(cell_count=ifelse(is.na(Batch), 0, 1)) %>%
+  select(Gene.Expression.Annotation, integrated_snn_res.0.1, cell_count) %>%
+  group_by(Gene.Expression.Annotation, integrated_snn_res.0.1) %>%
+  summarise(n= sum(cell_count)) %>%
+  group_by(Gene.Expression.Annotation) %>%
+  mutate(prop=n/sum(n))
+
+ggplotColours <- function(n = 6, h = c(0, 360) + 15){
+  if ((diff(h) %% 360) < 1) h[2] <- h[2] - 360/n
+  hcl(h = (seq(h[1], h[2], length = n)), c = 100, l = 65)
+}
+
+color_list <- ggplotColours(n=5)
+
+p5 <- ggplot(in.vivo.gene.expr.anno.cancer.cluster.props, aes(x=integrated_snn_res.0.1, y=prop, fill=Gene.Expression.Annotation)) +
+  geom_bar(stat="identity", position="dodge") +
+  theme_bw() + 
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) + 
+    scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
+  xlab("de novo clusters") +
+  ylab("Proportion of cells") + 
+  scale_fill_manual(values = color_list, name = "Annotation") +
+  ggtitle(label = "in vivo dataset") +
+  theme(plot.title = element_text(hjust = 0.5))
+
+```
+
+```{r}
+in.vitro.in.vitro.in.vivo.cancer.integrated <- subset(x = in.vitro.in.vivo.cancer.integrated, subset = Experiment == "in vitro")
+
+in.vitro.in.vitro.in.vivo.cancer.integrated@meta.data$Gene.Expression.Annotation <- factor(x = in.vitro.in.vitro.in.vivo.cancer.integrated@meta.data$Gene.Expression.Annotation, levels = c('iCAFs', 'myCAFs', 'Crabp1+ CAFs', 'ifCAFs'))
+```
+
+#Figure 3I
+```{r}
+all_combinations_in_vitro_cancer<-expand.grid(Gene.Expression.Annotation=c('iCAFs', 'myCAFs', 'Crabp1+ CAFs', 'ifCAFs'), integrated_snn_res.0.1=0:4) %>%
+  mutate(integrated_snn_res.0.1=factor(integrated_snn_res.0.1))
+
+# Calculate the proportions
+in.vitro.gene.expr.anno.cancer.cluster.props <- all_combinations_in_vitro_cancer %>%
+  left_join(in.vitro.in.vitro.in.vivo.cancer.integrated@meta.data, by = c("Gene.Expression.Annotation", "integrated_snn_res.0.1")) %>%
+  mutate(cell_count=ifelse(is.na(Batch), 0, 1)) %>%
+  select(Gene.Expression.Annotation, integrated_snn_res.0.1, cell_count) %>%
+  group_by(Gene.Expression.Annotation, integrated_snn_res.0.1) %>%
+  summarise(n= sum(cell_count)) %>%
+  group_by(Gene.Expression.Annotation) %>%
+  mutate(prop=n/sum(n))
+
+ggplotColours <- function(n = 6, h = c(0, 360) + 15){
+  if ((diff(h) %% 360) < 1) h[2] <- h[2] - 360/n
+  hcl(h = (seq(h[1], h[2], length = n)), c = 100, l = 65)
+}
+
+color_list <- ggplotColours(n=6)
+
+p6 <- ggplot(in.vitro.gene.expr.anno.cancer.cluster.props, aes(x=integrated_snn_res.0.1, y=prop, fill=Gene.Expression.Annotation)) +
+  geom_bar(stat="identity", position="dodge") +
+  theme_bw() + 
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) + 
+    scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
+  xlab("de novo clusters") +
+  ylab("Proportion of cells") + 
+  scale_fill_manual(values = c("#F8766D", "#B79F00", "#00BA38", "#619CFF"), name = "Annotation") +
+  ggtitle(label = "in vivo dataset") +
+  theme(plot.title = element_text(hjust = 0.5))
+```
+
+# Writing of Figures 3D-I
+```{r}
+Fig3_FtoK_plots <- cowplot::plot_grid(p1, p2, p3, p4, p5, p6, nrow = 2, ncol = 3)
+
+if (!dir.exists("Figure_3")) {dir.create("Figure_3")}
+ggsave(plot = Fig3_FtoK_plots, "Figure_3D_I.pdf", width = 15, height = 4.4444444*2, units = "in", path = "Figure_3/")
+```
+
+
+# Figure S6B - UMAP by biological replicate
+```{r}
+Fig_S6B_umap_plot <- DimPlot(PSC.singlets.rPCA.integrated, reduction = "umap", label = T, pt.size = 1, group.by = "Cell_line") + labs(title = "Cell line")
+
+if (!dir.exists("Figure_S6")) {dir.create("Figure_S6")}
+ggsave(plot = Fig_S6B_umap_plot, "Figure_S6B_UMAP.pdf", width = 5, height = 4.4444444, units = "in", path = "Figure_S6/")
+```
+
+# Figure S6C - biological replicate per cluster
+```{r}
+Cell.line.cluster.prop <-  PSC.singlets.rPCA.integrated@meta.data %>% 
+  group_by(integrated_snn_res.0.6, Cell_line) %>% 
+  summarise(count=n()) %>% 
+  group_by(integrated_snn_res.0.6) %>% 
+  mutate(prop=count/sum(count)) %>% 
+  ungroup()
+
+Fig_S6C_plot <- ggplot(Cell.line.cluster.prop, aes(x=integrated_snn_res.0.6, y=prop, fill=Cell_line)) +
+  geom_bar(stat="identity", position="stack") +
+  theme_bw() + 
+  theme(panel.border = element_rect(colour = "black", fill = NA, size= 0.5),
+        panel.grid.minor = element_blank(),
+        panel.grid.major = element_blank()) + 
+    scale_y_continuous(expand = c(0, 0), limits = c(0, 1)) +
+  xlab("Cluster") +
+  ylab("Proportion") + 
+  scale_fill_discrete(name = "Cell line")
+
+if (!dir.exists("Figure_S6")) {dir.create("Figure_S6")}
+ggsave(plot = Fig_S6C_plot, "Figure_S6C_Cell_line_cluster_prop.pdf", width = 5, height = 4.4444444, units = "in", path = "Figure_S6/")
+```
+
+# Figure S6D - UMAP by culture condition
+```{r}
+Fig_S6D_umap_plot <- DimPlot(PSC.singlets.rPCA.integrated, reduction = "umap", label = T, pt.size = 1, group.by = "Culture_type") + labs(title = "Culture condition")
+
+if (!dir.exists("Figure_S6")) {dir.create("Figure_S6")}
+ggsave(plot = Fig_S6D_umap_plot, "Figure_S6D_UMAP_Culture_type.pdf", width = 5, height = 4.4444444, units = "in", path = "Figure_S6/")
+```
+
+# GSEA for PSC and CAF clusters in co-culture
+Gene set enrichment analysis is performed on the integrated PSC single cells data to identify biological pathways enriched in each cluster. The analysis is performed with the package Single Cell Pathway Analysis (SCPA).
+
+Pathways are selected from the Molecular Signatures Database (MSigDB), including Hallmark, reactome and KEGG.
+```{r}
+hall_mark_pathways <- msigdbr("mouse", "H")
+reactome_pathways <- msigdbr(species = "mouse", category = "C2", subcategory = "CP:REACTOME")
+kegg_pathways <- msigdbr(species = "mouse", category = "C2", subcategory = "CP:KEGG")
+
+HRK_pathways <- rbind(hall_mark_pathways, reactome_pathways, kegg_pathways) %>%
+  format_pathways()
+```
+
+```{r}
+PSC.singlets.rPCA.integrated <- readRDS("PSC.singlets.rPCA.integrated.RDS")
+```
+
+A function outputs the enriched pathways for a given comparison. The groupingvariable for comparison is given as an argument. The ingroup and outgroup are also given. If the outgroup is NA, the comparison will be between ingroup and all others. 
+```{r}
+get_SCPA_pathways<-function(in_SO=PSC.singlets.rPCA.integrated, grouping_variable="integrated_snn_res.0.6", ingroup=0, outgroup=NA, in_pathways=HRK_pathways){
+  
+  SO<-in_SO
+  
+  if (is.na(outgroup)){
+    all_levels<-unique(SO@meta.data[[grouping_variable]])
+    outgroup<-setdiff(all_levels, ingroup)
+  }
+  
+  
+  SO@meta.data<-SO@meta.data %>% 
+    mutate(GSEA_group=ifelse(!!sym(grouping_variable) %in% ingroup, "ingroup", NA)) %>% 
+    mutate(GSEA_group=ifelse(!!sym(grouping_variable) %in% outgroup, "outgroup", GSEA_group))
+  
+  SCPA_out<-compare_seurat(SO,
+                           group1 = "GSEA_group", 
+                           group1_population = c("ingroup", "outgroup"),
+                           pathways = in_pathways, 
+                           parallel = T, cores = 4)
+  
+  return(SCPA_out)
+}
+
+scpa_out_cluster_0<-get_SCPA_pathways(ingroup = 0, outgroup = NA, grouping_variable = "integrated_snn_res.0.6")
+scpa_out_cluster_1<-get_SCPA_pathways(ingroup = 1, outgroup = NA, grouping_variable = "integrated_snn_res.0.6")
+scpa_out_cluster_2<-get_SCPA_pathways(ingroup = 2, outgroup = NA, grouping_variable = "integrated_snn_res.0.6")
+scpa_out_cluster_3<-get_SCPA_pathways(ingroup = 3, outgroup = NA, grouping_variable = "integrated_snn_res.0.6")
+scpa_out_cluster_4<-get_SCPA_pathways(ingroup = 4, outgroup = NA, grouping_variable = "integrated_snn_res.0.6")
+scpa_out_cluster_5<-get_SCPA_pathways(ingroup = 5, outgroup = NA, grouping_variable = "integrated_snn_res.0.6")
+
+scpa_out_cluster_Mono_Co<-get_SCPA_pathways(ingroup = "Mono-culture", outgroup = "Co-culture", grouping_variable = "Culture_type")
+```
+
+
+
+A function selects the enriched pathways at a significance cutoff
+```{r}
+get_sig_enriched<-function(in_df, FC_cutoff=0, padj_cutoff=0.05){
+  out_df<-in_df %>% 
+    filter(FC > 0 & adjPval < 0.05)
+  return(out_df)
+}
+
+scpa_out_cluster_0_enriched<-get_sig_enriched(scpa_out_cluster_0) %>% mutate(Cluster = "0")
+scpa_out_cluster_1_enriched<-get_sig_enriched(scpa_out_cluster_1) %>% mutate(Cluster = "1")
+scpa_out_cluster_2_enriched<-get_sig_enriched(scpa_out_cluster_2) %>% mutate(Cluster = "2")
+scpa_out_cluster_3_enriched<-get_sig_enriched(scpa_out_cluster_3) %>% mutate(Cluster = "3")
+scpa_out_cluster_4_enriched<-get_sig_enriched(scpa_out_cluster_4) %>% mutate(Cluster = "4")
+scpa_out_cluster_5_enriched<-get_sig_enriched(scpa_out_cluster_5) %>% mutate(Cluster = "5")
+
+scpa_out_Mono_enriched<-get_sig_enriched(scpa_out_cluster_Mono_Co) %>% mutate(Culture = "Mono-culture")
+scpa_out_Co_enriched<-scpa_out_cluster_Mono_Co %>% filter(FC < 0 & adjPval < 0.05) %>% mutate(Culture = "Co-culture")
+```
+
+
+Top 20 pathways are observed 
+```{r}
+Top_scpa_out_cluster_0_enriched <- scpa_out_cluster_0_enriched %>%  top_n(20, (qval + FC))
+Top_scpa_out_cluster_1_enriched <- scpa_out_cluster_1_enriched %>%  top_n(20, (qval + FC))
+Top_scpa_out_cluster_2_enriched <- scpa_out_cluster_2_enriched %>%  top_n(20, (qval + FC))
+Top_scpa_out_cluster_3_enriched <- scpa_out_cluster_3_enriched %>%  top_n(20, (qval + FC))
+Top_scpa_out_cluster_4_enriched <- scpa_out_cluster_4_enriched %>%  top_n(20, (qval + FC))
+Top_scpa_out_cluster_5_enriched <- scpa_out_cluster_5_enriched %>%  top_n(20, (qval + FC))
+Top_scpa_out_Mono_enriched <- scpa_out_Mono_enriched %>%  top_n(20, (qval + FC))
+Top_scpa_out_Co_enriched <- scpa_out_Co_enriched %>%  top_n(20, (qval + FC))
+```
+
+Pathways are selected for plotting
+```{r}
+Selected_Pathways <- c("HALLMARK_IL6_JAK_STAT3_SIGNALING", "HALLMARK_TNFA_SIGNALING_VIA_NFKB", "HALLMARK_COMPLEMENT", "HALLMARK_MYOGENESIS", "KEGG_FOCAL_ADHESION", "REACTOME_RHO_GTPASE_EFFECTORS", "REACTOME_TRANSLATION","REACTOME_MRNA_SPLICING", "HALLMARK_MYC_TARGETS_V1", "REACTOME_GLYCOSPHINGOLIPID_METABOLISM", "REACTOME_SPHINGOLIPID_METABOLISM", "KEGG_LYSOSOME", "REACTOME_INTERFERON_ALPHA_BETA_SIGNALING", "REACTOME_INTERFERON_SIGNALING", "KEGG_RIG_I_LIKE_RECEPTOR_SIGNALING_PATHWAY", "REACTOME_SMOOTH_MUSCLE_CONTRACTION", "REACTOME_MUSCLE_CONTRACTION", "REACTOME_EXTRACELLULAR_MATRIX_ORGANIZATION")
+
+
+Co.cul.Pathways <- rbind(scpa_out_cluster_0_enriched, scpa_out_cluster_1_enriched, scpa_out_cluster_2_enriched, scpa_out_cluster_3_enriched, scpa_out_cluster_4_enriched, scpa_out_cluster_5_enriched)
+Co.cul.Pathways <- Co.cul.Pathways %>%
+  filter(Pathway %in% Selected_Pathways)
+
+Co.cul.Pathways <- Co.cul.Pathways %>%
+  arrange(Cluster, desc(FC)) %>%
+  mutate(Pathway = gsub("_", " ", Pathway))
+```
+
+#Figure S6E
+```{r}
+Fig_S6E_plot <- ggplot(Co.cul.Pathways, aes(x = Cluster, y = Pathway)) + 
+               geom_point(aes(color = qval, size = FC)) +
+               theme_bw(base_size =6) +
+        scale_colour_gradient(limits=c(0, 10), low="white", high = "red") +
+        #scale_size(range = c(2,8)) +
+        ylab(NULL) +
+        ggtitle("") +
+  theme(axis.text.x = element_text(angle = 45, hjust=1, size = 10), title = element_text(size = 10), axis.text.y = element_text(size = 10)) +
+  scale_x_discrete(limits = c("3", "5", "0", "2", "1", "4")) +
+  scale_y_discrete(limits = c("REACTOME INTERFERON ALPHA BETA SIGNALING", "REACTOME INTERFERON SIGNALING", "KEGG RIG I LIKE RECEPTOR SIGNALING PATHWAY", "HALLMARK MYOGENESIS", "KEGG FOCAL ADHESION", "REACTOME RHO GTPASE EFFECTORS", "REACTOME TRANSLATION","REACTOME MRNA SPLICING", "HALLMARK MYC TARGETS V1", "HALLMARK IL6 JAK STAT3 SIGNALING", "HALLMARK TNFA SIGNALING VIA NFKB", "HALLMARK COMPLEMENT", "REACTOME SMOOTH MUSCLE CONTRACTION", "REACTOME MUSCLE CONTRACTION", "REACTOME EXTRACELLULAR MATRIX ORGANIZATION", "REACTOME GLYCOSPHINGOLIPID METABOLISM", "REACTOME SPHINGOLIPID METABOLISM", "KEGG LYSOSOME"), labels = function(x) str_wrap(x, width = 50))
+
+if (!dir.exists("Figure_S6")) {dir.create("Figure_S6")}
+ggsave(plot = Fig_S6E_plot, "Figure_S6E_GSEA_Clusters.pdf", width = 7.5, height = 4.4444444, units = "in", path = "Figure_S6/")
+```
+
+
+# Predictions of transcription factor activities
+Differential transcription factor activities between the clusters is investigated with decoupleR
+```{r}
+library(decoupleR)
+```
+
+The TF network and data matrix are prepared and regulatory activities are calculated
+```{r}
+net <- get_collectri(organism = "mouse", split_complexes = FALSE)
+
+PSC.singlets.rPCA.Integrated <- readRDS("PSC.singlets.rPCA.integrated.RDS")
+
+mat<- as.matrix(PSC.singlets.rPCA.Integrated@assays$RNA@data)
+
+acts_ulm_PSCs <- run_ulm(mat=mat, net=net, .source='source', .target='target',
+                .mor='mor', minsize = 20)
+
+# write.table(acts_ulm_PSCs, "acts_ulm_PSCs.txt", sep = "\t")
+```
+
+The TF activities are integrated in the seurat object
+```{r}
+PSC.singlets.rPCA.Integrated[['tfsulm']] <- acts_ulm_PSCs %>%
+  pivot_wider(id_cols = 'source', names_from = 'condition',
+              values_from = 'score') %>%
+  column_to_rownames('source') %>%
+  Seurat::CreateAssayObject(.)
+
+# Change assay
+DefaultAssay(object = PSC.singlets.rPCA.Integrated) <- "tfsulm"
+
+# Scale the data
+PSC.singlets.rPCA.Integrated <- ScaleData(PSC.singlets.rPCA.Integrated)
+
+#saveRDS(PSC.singlets.rPCA.Integrated, "TF.Activity.PSC.singlets.rPCA.Integrated.RDS")
+```
+
+# Differentially active transcription factors for co-culture clusters
+```{r}
+TF.Activity.PSC.singlets.rPCA.Integrated <- readRDS("TF.Activity.PSC.singlets.rPCA.Integrated.RDS")
+```
+
+```{r}
+Cluster.0.TFs <- FindMarkers(TF.Activity.PSC.singlets.rPCA.Integrated, ident.1 = "0", assay = "tfsulm", only.pos = T, slot = "scale.data")
+Cluster.0.TFs <- Cluster.0.TFs %>%
+filter(p_val_adj < 0.05)
+Cluster.1.TFs <- FindMarkers(TF.Activity.PSC.singlets.rPCA.Integrated, ident.1 = "1", assay = "tfsulm", only.pos = T, slot = "scale.data")
+Cluster.1.TFs <- Cluster.1.TFs %>%
+filter(p_val_adj < 0.05)
+Cluster.2.TFs <- FindMarkers(TF.Activity.PSC.singlets.rPCA.Integrated, ident.1 = "2", assay = "tfsulm", only.pos = T, slot = "scale.data")
+Cluster.2.TFs <- Cluster.2.TFs %>%
+filter(p_val_adj < 0.05)
+Cluster.3.TFs <- FindMarkers(TF.Activity.PSC.singlets.rPCA.Integrated, ident.1 = "3", assay = "tfsulm", only.pos = T, slot = "scale.data")
+Cluster.3.TFs <- Cluster.3.TFs %>%
+filter(p_val_adj < 0.05)
+Cluster.4.TFs <- FindMarkers(TF.Activity.PSC.singlets.rPCA.Integrated, ident.1 = "4", assay = "tfsulm", only.pos = T, slot = "scale.data")
+Cluster.4.TFs <- Cluster.4.TFs %>%
+filter(p_val_adj < 0.05)
+Cluster.5.TFs <- FindMarkers(TF.Activity.PSC.singlets.rPCA.Integrated, ident.1 = "5", assay = "tfsulm", only.pos = T, slot = "scale.data")
+Cluster.5.TFs <- Cluster.5.TFs %>%
+filter(p_val_adj < 0.05)
+```
+
+```{r}
+Top.Cluster.0.TFs <- Cluster.0.TFs %>%
+  filter(p_val_adj < 0.05) %>%
+  top_n(5, avg_diff)
+
+Top.Cluster.1.TFs <- Cluster.1.TFs %>%
+  filter(p_val_adj < 0.05) %>%
+  top_n(5, avg_diff)
+
+Top.Cluster.2.TFs <- Cluster.2.TFs %>%
+  filter(p_val_adj < 0.05) %>%
+  top_n(5, avg_diff)
+
+Top.Cluster.3.TFs <- Cluster.3.TFs %>%
+  filter(p_val_adj < 0.05) %>%
+  top_n(5, avg_diff)
+
+Top.Cluster.4.TFs <- Cluster.4.TFs %>%
+  filter(p_val_adj < 0.05) %>%
+  top_n(5, avg_diff)
+
+Top.Cluster.5.TFs <- Cluster.5.TFs %>%
+  filter(p_val_adj < 0.05) %>%
+  top_n(5, avg_diff)
+```
+
+```{r}
+Selected.TFs <- unique(c(rownames(Top.Cluster.3.TFs), rownames(Top.Cluster.5.TFs), rownames(Top.Cluster.0.TFs), rownames(Top.Cluster.2.TFs), rownames(Top.Cluster.1.TFs), rownames(Top.Cluster.4.TFs)))
+
+# Extract activities from object as a long dataframe
+TF.Activity.df.Co.cul <- t(as.matrix(TF.Activity.PSC.singlets.rPCA.Integrated@assays$tfsulm@scale.data)) %>%
+  as.data.frame() %>%
+  mutate(Cluster = TF.Activity.PSC.singlets.rPCA.Integrated@meta.data$integrated_snn_res.0.6) %>%
+  pivot_longer(cols = -Cluster, names_to = "source", values_to = "score") %>%
+  group_by(Cluster, source) %>%
+  summarise(mean = mean(score)) 
+
+Selected.TF.Activity.Co.cul<- TF.Activity.df.Co.cul %>%
+  filter(source %in% Selected.TFs) %>%
+  spread(key = Cluster, value = mean) %>%
+  column_to_rownames("source") %>%
+  select("3", "5", "0", "2", "1", "4")
+
+Selected.TF.Activity.Co.cul <- Selected.TF.Activity.Co.cul[match(Selected.TFs, rownames(Selected.TF.Activity.Co.cul)),] 
+```
+
+
+#Figure S6F
+```{r}
+breaksList = seq(-1.5, 1.5, by = 0.1)
+Fig_S6F_heatmap_plot <- pheatmap(Selected.TF.Activity.Co.cul, breaks = breaksList, cluster_rows = F, cluster_cols = F, color = colorRampPalette(rev(brewer.pal(n = 7, name = "RdBu")))(length(breaksList)))
+
+if (!dir.exists("Figure_S6")) {dir.create("Figure_S6")}
+ggsave(plot = Fig_S6F_heatmap_plot, "Figure_S6F_TF_Activities_Cocul.pdf", width = 7.5, height = 4.4444444, units = "in", path = "Figure_S6/")
+```
+
+
+# Signature scores for in vitro clusters in the FAP CAF data
+The mouse PSC cluster signatures are converted to orthologous human names
+```{r}
+Orthology.table.genes <- read.table("Human_mouse_orthology_v1.txt") %>% 
+  select(Musmu_gene_name, Homsa_gene_name)
+
+PSC.singlets.rPCA.integrated <- readRDS("PSC.singlets.rPCA.integrated.RDS")
+
+get_RNA_markers<-function(SO, id1, logfc_cutoff=0.585, min_pct_cutoff=0.25, padj_cutoff=0.05){
+  markers_df<-FindMarkers(SO, ident.1 = id1, assay = "RNA", logfc.threshold = logfc_cutoff, min.pct = min_pct_cutoff, only.pos = T)
+  markers_df<-markers_df %>% filter(p_val_adj<padj_cutoff)
+  return(markers_df)
+}
+
+Cluster.0.Markers<-get_RNA_markers(SO=PSC.singlets.rPCA.integrated, id1 = "0")
+Cluster.1.Markers<-get_RNA_markers(SO=PSC.singlets.rPCA.integrated, id1 = "1")
+Cluster.2.Markers<-get_RNA_markers(SO=PSC.singlets.rPCA.integrated, id1 = "2")
+Cluster.3.Markers<-get_RNA_markers(SO=PSC.singlets.rPCA.integrated, id1 = "3")
+Cluster.4.Markers<-get_RNA_markers(SO=PSC.singlets.rPCA.integrated, id1 = "4")
+Cluster.5.Markers<-get_RNA_markers(SO=PSC.singlets.rPCA.integrated, id1 = "5")
+
+humanize_signature<-function(in_vect){
+  human_vect<-Orthology.table.genes %>% 
+    filter(Musmu_gene_name %in% in_vect) %>% 
+    `$`(Homsa_gene_name)
+  return(human_vect)
+}
+```
+
+The human CAF dataset with CAF-specific clusters (figure 2A) is loaded and re-annotated. Here, we use the Seurat object `CAFs.rPCA.integrated` generated in this study. The code for generating the integrated seurat object is described in the R markdown for figures 1-2.  The raw data and the Seurat object `CAFs.rPCA.integrated.RDS` are available via SND at https://doi.org/10.5878/0ehq-1434. 
+```{r}
+In.vivo.CAF.Spec.Clusters <- readRDS("CAFs.rPCA.integrated.RDS")
+
+DefaultAssay(In.vivo.CAF.Spec.Clusters) <- "RNA"
+In.vivo.CAF.Spec.Clusters <- FindVariableFeatures(In.vivo.CAF.Spec.Clusters, selection.method = "vst", nfeatures = 3000)
+
+DefaultAssay(In.vivo.CAF.Spec.Clusters) <- "integrated"
+In.vivo.CAF.Spec.Clusters <- ScaleData(In.vivo.CAF.Spec.Clusters, verbose = FALSE)
+In.vivo.CAF.Spec.Clusters <- RunPCA(In.vivo.CAF.Spec.Clusters, npcs = 50, verbose = FALSE)
+
+ElbowPlot(In.vivo.CAF.Spec.Clusters, ndims = 50)
+# Determine percent of variation associated with each PC
+pct <- In.vivo.CAF.Spec.Clusters@reductions$pca@stdev / sum(In.vivo.CAF.Spec.Clusters@reductions$pca@stdev) * 100
+# Determine the difference between variation of PC and subsequent PC
+co2 <- sort(which((pct[1:length(pct)-1] - pct[2:length(pct)]) > 0.1),  decreasing = T)[1] + 1 # last point    where change of % of varia8tion is more than 0.1%.
+In.vivo.CAF.Spec.Clusters <- RunUMAP(In.vivo.CAF.Spec.Clusters, reduction = "pca", dims = 1:17)
+
+In.vivo.CAF.Spec.Clusters <- FindNeighbors(In.vivo.CAF.Spec.Clusters, reduction = "pca", dims = 1:17)
+In.vivo.CAF.Spec.Clusters <- FindClusters(In.vivo.CAF.Spec.Clusters, resolution = 0.6)
+
+In.vivo.CAF.Spec.Clusters.meta.data <- In.vivo.CAF.Spec.Clusters@meta.data
+In.vivo.CAF.Gene.Expression.Annotation <- In.vivo.CAF.Spec.Clusters.meta.data %>%
+  mutate(Gene.Expression.Annotation.high.res = case_when(
+    integrated_snn_res.0.6 == "0" ~ "LRRC15+ myCAFs",
+    integrated_snn_res.0.6 == "6" ~ "LRRC15+ myCAFs",
+    integrated_snn_res.0.6 == "4" ~ "ENG+ myCAFs",
+    integrated_snn_res.0.6 == "7" ~ "ENG+ myCAFs",
+    integrated_snn_res.0.6 == "2" ~ "ENG+ iCAFs",
+    integrated_snn_res.0.6 == "3" ~ "ENG+ iCAFs",
+    integrated_snn_res.0.6 == "9" ~ "ENG+ iCAFs",
+    integrated_snn_res.0.6 == "1" ~ "WT1+ iCAFs",
+    integrated_snn_res.0.6 == "5" ~ "WT1+ iCAFs",
+    integrated_snn_res.0.6 == "8" ~ "WT1+ iCAFs",
+    integrated_snn_res.0.6 == "10" ~ "VEGFA+ CAFs",
+    integrated_snn_res.0.6 == "11" ~ "CAP-like CAFs",
+    integrated_snn_res.0.6 == "12" ~ "PI16+ CAFs",
+    integrated_snn_res.0.6 == "13" ~ "ifCAFs",
+    integrated_snn_res.0.6 == "14" ~ "WT1+ CAFs",
+  )) %>%
+  select(Gene.Expression.Annotation.high.res)
+```
+
+A function adds a signature z-score in the metadata of a seurat object. The signature should be a character vector
+```{r}
+Add_Z<-function(in_SO, in_sig, Z_name){
+  
+  DefaultAssay(in_SO) <- "RNA"
+  #verifies the genes are part of the seurat object
+  in_sig<-in_sig[in_sig %in% rownames(in_SO)]
+  
+   # Genes which are 0 in >95% of cells are removed
+  long_NC <- in_SO@assays$RNA@data[in_sig,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) %>% 
+    group_by(Gene) %>% 
+    summarise(prop_zeros = sum(NC == 0)/n()) %>% 
+    filter(prop_zeros <= 0.95) %>% 
+    select(-prop_zeros)
+    
+  # NC is extracted from the SO
+    long_NC <- in_SO@assays$RNA@data[long_NC$Gene,] %>%
+    round(2) %>% as.matrix() %>% as.data.frame() %>%
+    rownames_to_column("Gene") %>%
+    gather(key = "Cell", value = "NC",-Gene) 
+  
+  # Signature scores are calculated for each cell
+  get_zs<-function(in_sign){
+    Z_scores<-long_NC %>%
+      filter(Gene %in% in_sign) %>% 
+      group_by(Gene) %>%
+      mutate(Z = (NC - mean(NC)) / sd(NC)) %>%
+      drop_na() %>% 
+      group_by(Cell) %>%
+      summarise(sign_Z = mean(Z) %>% round(2)) %>%
+      dplyr::rename(!!Z_name := sign_Z)
+      
+    
+    return(Z_scores)
+  }
+  
+  Z_df<-get_zs(in_sig) 
+ 
+  # Z-score is added to the metadata
+  in_SO@meta.data<-in_SO@meta.data %>% 
+    rownames_to_column("Cell") %>% 
+    left_join(Z_df, by="Cell") %>% 
+    column_to_rownames("Cell")
+  
+  return(in_SO)
+}
+```
+
+```{r}
+In.vivo.CAF.Spec.Clusters <- Add_Z(in_SO = In.vivo.CAF.Spec.Clusters, in_sig = humanize_signature(rownames(Cluster.0.Markers)), Z_name = "Co-Culture iCAF Z-Score")
+
+In.vivo.CAF.Spec.Clusters <- Add_Z(in_SO = In.vivo.CAF.Spec.Clusters, in_sig = humanize_signature(rownames(Cluster.4.Markers)), Z_name = "Co-Culture ifCAF Z-Score")
+
+In.vivo.CAF.Spec.Clusters <- Add_Z(in_SO = In.vivo.CAF.Spec.Clusters, in_sig = humanize_signature(rownames(Cluster.1.Markers)), Z_name = "Co-Culture myCAF Z-Score")
+
+In.vivo.CAF.Spec.Clusters <- Add_Z(in_SO = In.vivo.CAF.Spec.Clusters, in_sig = humanize_signature(rownames(Cluster.2.Markers)), Z_name = "Co-Culture Crabp1+ CAF Z-Score")
+```
+
+Violin plots are prepared for the signature scores
+```{r}
+p1 <- VlnPlot(In.vivo.CAF.Spec.Clusters, "Co-Culture iCAF Z-Score", pt.size = 0) & geom_hline(yintercept = 0) 
+p1 <- p1 + NoLegend()
+p2 <- VlnPlot(In.vivo.CAF.Spec.Clusters, "Co-Culture ifCAF Z-Score", pt.size = 0) & geom_hline(yintercept = 0)
+p2 <- p2 + NoLegend()
+p3 <- VlnPlot(In.vivo.CAF.Spec.Clusters, "Co-Culture myCAF Z-Score", pt.size = 0) & geom_hline(yintercept = 0)
+p3 <- p3 + NoLegend()
+p4 <- VlnPlot(In.vivo.CAF.Spec.Clusters, "Co-Culture Crabp1+ CAF Z-Score", pt.size = 0) & geom_hline(yintercept = 0)
+p4 <- p4 + NoLegend()
+```
+
+#Figure S6G-J
+```{r}
+Fig_S6GtoJ_Vln_plot <- plot_grid(p1, p2, p3, p4, nrow = 2, ncol = 2)
+
+if (!dir.exists("Figure_S6")) {dir.create("Figure_S6")}
+ggsave(plot = Fig_S6GtoJ_Vln_plot, "Figure_S6G_J_Vln_Plot_Cocul_subtype_Scores.pdf", width = 15, height = 4.4444444*1.5, units = "in", path = "Figure_S6/")
+```
+
+
