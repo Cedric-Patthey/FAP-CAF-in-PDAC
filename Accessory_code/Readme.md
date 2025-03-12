@@ -1,4 +1,4 @@
-# Acessory code
+# Accessory code
 
 ## Reference_genomes_preparation
 
