@@ -1,4 +1,4 @@
-## Figure S8
+# Figure S8
 
 Code and metadata to reproduce figures S8. The data relates to the mouse bulk RNA-seq experiment with 68 samples from co-cultures of PSC and Tumour cells (and mono-culture controls) , treated with DMXAA or Interferon gamma.
 
