@@ -1,6 +1,6 @@
 # FAP-CAF-in-PDAC
 
-This repository gathers the code and metadata to reproduce the results presented in the publication by Cumming et al, 2025.
+This repository gathers the code and metadata to reproduce the results presented in the publication by Cumming et al, 2025 vailable at [10.1158/0008-5472.CAN-23-3252](https://doi.org/10.1158/0008-5472.CAN-23-3252)
 
 **Dissecting FAP+ Cell Diversity in Pancreatic Cancer Uncovers an Interferon-Response Subtype of Cancer-Associated Fibroblasts with Tumor-Restraining Properties** 
 
